@@ -44,8 +44,8 @@ def handle_text_message(event):
         stock = get_market_info(user_text)
 
         if stock:
-            ai_text = "🤖 AI 分析暫時維護中"
-            
+            ai_text = ai_stock_analysis(stock)
+
             reply_text = (
                 f"📈 {stock['stock_name']} ({stock['stock_id']})\n"
                 f"📅 日期：{stock['date']}\n\n"
