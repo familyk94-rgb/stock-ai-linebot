@@ -1,3 +1,4 @@
+import json
 from linebot.v3.messaging import FlexMessage, FlexContainer
 
 
@@ -10,28 +11,30 @@ def build_stock_flex(stock, ai_text):
         "header": {
             "type": "box",
             "layout": "vertical",
-            "backgroundColor": "#1F2937",
+            "backgroundColor": "#111827",
+            "paddingAll": "20px",
             "contents": [
                 {
                     "type": "text",
-                    "text": "📊 股市柑仔店 AI 投資儀表板",
-                    "weight": "bold",
-                    "size": "md",
-                    "color": "#FFFFFF"
+                    "text": "股市柑仔店 AI Pro",
+                    "color": "#FBBF24",
+                    "size": "sm",
+                    "weight": "bold"
                 },
                 {
                     "type": "text",
                     "text": f"{stock['stock_name']}（{stock['stock_id']}）",
+                    "color": "#FFFFFF",
                     "size": "xl",
                     "weight": "bold",
-                    "color": "#FBBF24",
                     "margin": "md"
                 },
                 {
                     "type": "text",
                     "text": f"日期：{stock['date']}",
-                    "size": "sm",
-                    "color": "#D1D5DB"
+                    "color": "#D1D5DB",
+                    "size": "xs",
+                    "margin": "sm"
                 }
             ]
         },
@@ -59,15 +62,13 @@ def build_stock_flex(stock, ai_text):
                     "wrap": True
                 },
                 {
-                    "type": "separator",
-                    "margin": "md"
+                    "type": "separator"
                 },
                 {
                     "type": "text",
-                    "text": "📈 技術指標",
+                    "text": "📈 技術分析",
                     "weight": "bold",
-                    "size": "md",
-                    "margin": "md"
+                    "size": "md"
                 },
                 {
                     "type": "text",
@@ -78,21 +79,21 @@ def build_stock_flex(stock, ai_text):
                         f"MA60：{technical.get('ma60')}\n"
                         f"RSI：{technical.get('rsi')}\n"
                         f"KD：K {technical.get('k')} / D {technical.get('d')}\n"
-                        f"MACD：{technical.get('macd')}"
+                        f"MACD：{technical.get('macd')}\n"
+                        f"Signal：{technical.get('signal')}\n"
+                        f"Hist：{technical.get('histogram')}"
                     ),
                     "size": "sm",
                     "wrap": True
                 },
                 {
-                    "type": "separator",
-                    "margin": "md"
+                    "type": "separator"
                 },
                 {
                     "type": "text",
                     "text": ai_text,
                     "size": "sm",
-                    "wrap": True,
-                    "margin": "md"
+                    "wrap": True
                 }
             ]
         },
@@ -102,7 +103,7 @@ def build_stock_flex(stock, ai_text):
             "contents": [
                 {
                     "type": "text",
-                    "text": "⚠️ 本內容僅供研究參考，非投資建議。",
+                    "text": "⚠️ 僅供研究參考，非投資建議。",
                     "size": "xs",
                     "color": "#6B7280",
                     "wrap": True
@@ -113,5 +114,5 @@ def build_stock_flex(stock, ai_text):
 
     return FlexMessage(
         alt_text=f"{stock['stock_name']} 投資儀表板",
-        contents=FlexContainer.from_dict(bubble)
+        contents=FlexContainer.from_json(json.dumps(bubble))
     )
