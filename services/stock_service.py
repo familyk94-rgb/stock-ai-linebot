@@ -42,3 +42,29 @@ def get_stock_info(stock_id: str):
         "min": latest["min"],
         "volume": latest["Trading_Volume"],
     }
+
+
+def get_stock_history(stock_id: str, days: int = 250):
+    """
+    取得最近 N 天歷史股價資料（給 technical_service 使用）
+    """
+
+    url = "https://api.finmindtrade.com/api/v4/data"
+
+    start_date = (date.today() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    params = {
+        "dataset": "TaiwanStockPrice",
+        "data_id": stock_id,
+        "start_date": start_date,
+        "token": TOKEN,
+    }
+
+    r = requests.get(url, params=params)
+
+    if r.status_code != 200:
+        return []
+
+    result = r.json()
+
+    return result.get("data", [])
