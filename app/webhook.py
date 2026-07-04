@@ -39,8 +39,7 @@ async def line_webhook(request: Request):
 def handle_text_message(event):
     user_text = event.message.text.strip()
 
-    messages = [TextMessage(text=f"收到訊息：{user_text}")]
-
+    messages = [TextMessage(text="🔥 Flex Version V2")]
     if user_text.isdigit():
         stock = get_market_info(user_text)
 
