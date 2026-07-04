@@ -1,35 +1,30 @@
-import os
 from openai import OpenAI
-from dotenv import load_dotenv
+from app.config import OPENAI_API_KEY
 
-load_dotenv()
-
-client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY")
-)
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 
-def analyze_stock(stock_data: dict):
-
+def ai_stock_analysis(stock):
     prompt = f"""
 你是一位專業台股分析師。
 
-請分析下面股票資料：
+請根據以下資料，提供簡短分析。
 
-股票代號：{stock_data['stock_id']}
-日期：{stock_data['date']}
-收盤價：{stock_data['close']}
-最高價：{stock_data['max']}
-最低價：{stock_data['min']}
-成交量：{stock_data['volume']}
+股票名稱：{stock['stock_name']}
+股票代號：{stock['stock_id']}
+收盤價：{stock['price']}
+最高價：{stock['high']}
+最低價：{stock['low']}
+成交量：{stock['volume_text']}
 
-請用繁體中文回答：
+請使用以下格式：
 
-1. 今日盤勢
-2. 短線分析
-3. 操作建議
+📊 AI分析
+📈 趨勢：
+💡 操作建議：
+⚠️ 風險提醒：
 
-回答控制在150字內。
+限制150字內。
 """
 
     response = client.chat.completions.create(

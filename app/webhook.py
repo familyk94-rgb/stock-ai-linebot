@@ -12,6 +12,7 @@ from linebot.v3.webhooks import MessageEvent, TextMessageContent
 
 from app.config import LINE_CHANNEL_SECRET, LINE_CHANNEL_ACCESS_TOKEN
 from services.market_service import get_market_info
+from services.ai_service import ai_stock_analysis
 
 router = APIRouter()
 
@@ -43,6 +44,8 @@ def handle_text_message(event):
         stock = get_market_info(user_text)
 
         if stock:
+            ai_text = ai_stock_analysis(stock)
+
             reply_text = (
                 f"📈 {stock['stock_name']} ({stock['stock_id']})\n"
                 f"📅 日期：{stock['date']}\n\n"
@@ -50,7 +53,8 @@ def handle_text_message(event):
                 f"📈 開盤價：{stock['open_text']} 元\n"
                 f"🔺 最高價：{stock['high_text']} 元\n"
                 f"🔻 最低價：{stock['low_text']} 元\n"
-                f"📦 成交量：{stock['volume_text']}"
+                f"📦 成交量：{stock['volume_text']}\n\n"
+                f"{ai_text}"
             )
         else:
             reply_text = f"❌ 查不到股票代號：{user_text}"
