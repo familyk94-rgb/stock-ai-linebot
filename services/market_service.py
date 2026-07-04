@@ -1,4 +1,5 @@
 from services.stock_service import get_stock_info
+from services.technical_service import get_technical_indicators
 
 
 STOCK_NAMES = {
@@ -39,26 +40,25 @@ def get_market_info(stock_id: str):
     if not stock:
         return None
 
+    technical = get_technical_indicators(stock_id)
     stock_name = get_stock_name(stock_id)
-
-    close_price = stock["close"]
-    open_price = stock["open"]
-    high_price = stock["max"]
-    low_price = stock["min"]
-    volume = stock["volume"]
 
     return {
         "stock_id": stock_id,
         "stock_name": stock_name,
         "date": stock["date"],
-        "price": close_price,
-        "open": open_price,
-        "high": high_price,
-        "low": low_price,
-        "volume": volume,
-        "price_text": format_price(close_price),
-        "open_text": format_price(open_price),
-        "high_text": format_price(high_price),
-        "low_text": format_price(low_price),
-        "volume_text": format_number(volume),
+
+        "price": stock["close"],
+        "open": stock["open"],
+        "high": stock["max"],
+        "low": stock["min"],
+        "volume": stock["volume"],
+
+        "price_text": format_price(stock["close"]),
+        "open_text": format_price(stock["open"]),
+        "high_text": format_price(stock["max"]),
+        "low_text": format_price(stock["min"]),
+        "volume_text": format_number(stock["volume"]),
+
+        "technical": technical,
     }
