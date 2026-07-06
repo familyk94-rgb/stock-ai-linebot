@@ -1,6 +1,7 @@
 from services.stock_service import get_stock_info
 from services.technical_service import get_technical_indicators
 from services.stock_name_service import get_stock_name
+from services.score_service import calculate_ai_index
 
 
 def format_number(value):
@@ -20,6 +21,8 @@ def format_price(value):
 
 
 def get_market_info(stock_id: str):
+    stock_id = str(stock_id).strip()
+
     stock = get_stock_info(stock_id)
 
     if not stock:
@@ -28,12 +31,7 @@ def get_market_info(stock_id: str):
     technical = get_technical_indicators(stock_id)
     stock_name = get_stock_name(stock_id)
 
-    print("========== DEBUG ==========")
-    print("stock_id =", stock_id)
-    print("stock_name =", stock_name)
-    print("===========================")
-
-    return {
+    stock_data = {
         "stock_id": stock_id,
         "stock_name": stock_name,
         "date": stock["date"],
@@ -52,3 +50,7 @@ def get_market_info(stock_id: str):
 
         "technical": technical,
     }
+
+    stock_data["ai_index"] = calculate_ai_index(stock_data)
+
+    return stock_data
