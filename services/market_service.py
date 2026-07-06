@@ -1,17 +1,6 @@
 from services.stock_service import get_stock_info
 from services.technical_service import get_technical_indicators
-
-
-STOCK_NAMES = {
-    "2330": "台積電",
-    "2317": "鴻海",
-    "2454": "聯發科",
-    "2303": "聯電",
-    "2308": "台達電",
-    "2412": "中華電",
-    "0050": "元大台灣50",
-    "0056": "元大高股息",
-}
+from services.stock_name_service import get_stock_name
 
 
 def format_number(value):
@@ -28,10 +17,6 @@ def format_price(value):
         return f"{float(value):,.2f}"
     except Exception:
         return str(value)
-
-
-def get_stock_name(stock_id: str):
-    return STOCK_NAMES.get(stock_id, "未知股票")
 
 
 def get_market_info(stock_id: str):
