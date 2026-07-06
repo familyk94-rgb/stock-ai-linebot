@@ -28,6 +28,11 @@ def get_market_info(stock_id: str):
     technical = get_technical_indicators(stock_id)
     stock_name = get_stock_name(stock_id)
 
+    print("========== DEBUG ==========")
+    print("stock_id =", stock_id)
+    print("stock_name =", stock_name)
+    print("===========================")
+
     return {
         "stock_id": stock_id,
         "stock_name": stock_name,
