@@ -38,7 +38,10 @@ def download_stock_names():
         stock_name = str(item.get("stock_name", "")).strip()
 
         if stock_id and stock_name:
-            stock_names[stock_id] = stock_name
+            stock_names[stock_id] = {
+                "stock_id": stock_id,
+                "stock_name": stock_name,
+            }
 
     os.makedirs("data", exist_ok=True)
 
@@ -57,5 +60,39 @@ def load_stock_names():
 
 
 def get_stock_name(stock_id: str):
+    stock_id = str(stock_id).strip()
     stock_names = load_stock_names()
-    return stock_names.get(stock_id, "未知股票")
+
+    stock = stock_names.get(stock_id)
+
+    if stock:
+        return stock["stock_name"]
+
+    return "未知股票"
+
+
+def find_stock_by_name(keyword: str):
+    keyword = str(keyword).strip()
+    stock_names = load_stock_names()
+
+    results = []
+
+    for stock_id, stock in stock_names.items():
+        stock_name = stock["stock_name"]
+
+        if keyword in stock_name:
+            results.append({
+                "stock_id": stock_id,
+                "stock_name": stock_name,
+            })
+
+    return results
+
+
+def get_stock_id_by_name(keyword: str):
+    results = find_stock_by_name(keyword)
+
+    if not results:
+        return None
+
+    return results[0]["stock_id"]
