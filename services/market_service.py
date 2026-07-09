@@ -1,7 +1,7 @@
 from services.stock_service import get_stock_info
 from services.technical_service import get_technical_indicators
 from services.stock_name_service import get_stock_name
-from services.score_service import calculate_ai_index
+from core.ganzai_ai import GanzaiAI
 
 
 def format_number(value):
@@ -51,6 +51,7 @@ def get_market_info(stock_id: str):
         "technical": technical,
     }
 
-    stock_data["ai_index"] = calculate_ai_index(stock_data)
+    ai = GanzaiAI(stock_data)
+    stock_data["core"] = ai.run()
 
     return stock_data

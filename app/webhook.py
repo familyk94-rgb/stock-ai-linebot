@@ -13,7 +13,7 @@ from linebot.v3.webhooks import MessageEvent, TextMessageContent
 from app.config import LINE_CHANNEL_SECRET, LINE_CHANNEL_ACCESS_TOKEN
 from services.market_service import get_market_info
 from services.ai_service import ai_stock_analysis
-from services.flex_service import build_stock_flex
+from app.flex.builder import build_stock_dashboard_flex
 
 router = APIRouter()
 
@@ -39,13 +39,14 @@ async def line_webhook(request: Request):
 def handle_text_message(event):
     user_text = event.message.text.strip()
 
-    messages = [TextMessage(text="🔥 Flex Version V2")]
+    messages = [TextMessage(text="請輸入股票代號，例如：2330")]
+
     if user_text.isdigit():
         stock = get_market_info(user_text)
 
         if stock:
             ai_text = ai_stock_analysis(stock)
-            flex_message = build_stock_flex(stock, ai_text)
+            flex_message = build_stock_dashboard_flex(stock, ai_text)
             messages = [flex_message]
         else:
             messages = [TextMessage(text=f"❌ 查不到股票代號：{user_text}")]
