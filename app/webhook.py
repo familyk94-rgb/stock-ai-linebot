@@ -1,3 +1,5 @@
+import traceback
+
 from fastapi import APIRouter, Request, HTTPException
 
 from linebot.v3.webhook import WebhookHandler
@@ -12,10 +14,8 @@ from linebot.v3.messaging import (
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 
 from app.config import LINE_CHANNEL_SECRET, LINE_CHANNEL_ACCESS_TOKEN
-
 from services.market_service import get_market_info
 from services.ai_service import ai_stock_analysis
-
 from app.flex.builder import build_stock_dashboard_flex
 
 
@@ -43,7 +43,6 @@ async def line_webhook(request: Request):
 def handle_text_message(event: MessageEvent):
     user_text = event.message.text.strip()
 
-    # 只處理股票代號，例如：2330、0050
     if not user_text.isdigit():
         reply_text(event.reply_token, "請輸入股票代號，例如：2330")
         return
@@ -52,25 +51,49 @@ def handle_text_message(event: MessageEvent):
 
     try:
         market_data = get_market_info(stock_code)
+
+        if not isinstance(market_data, dict):
+            raise TypeError(f"market_data 應該是 dict，但收到 {type(market_data).__name__}")
+
         ai_result = ai_stock_analysis(stock_code, market_data)
+
+        if isinstance(ai_result, str):
+            ai_result = {
+                "score": None,
+                "decision": "觀察",
+                "risk_level": "未評估",
+                "shopkeeper_message": "阿柑店長看法：目前先觀察，不急著追高。",
+                "trend": market_data.get("trend"),
+                "ma_signal": market_data.get("ma_signal"),
+                "macd_signal": market_data.get("macd_signal"),
+                "rsi_signal": market_data.get("rsi_signal"),
+                "ai_summary": ai_result,
+                "explain": ai_result,
+            }
+
+        if not isinstance(ai_result, dict):
+            raise TypeError(f"ai_result 應該是 dict 或 str，但收到 {type(ai_result).__name__}")
 
         flex_data = {
             "stock_code": stock_code,
             "stock_name": market_data.get("stock_name", ""),
             "score": ai_result.get("score"),
-            "decision": ai_result.get("decision"),
-            "risk_level": ai_result.get("risk_level"),
-            "shopkeeper_message": ai_result.get("shopkeeper_message"),
+            "decision": ai_result.get("decision", "觀察"),
+            "risk_level": ai_result.get("risk_level", "未評估"),
+            "shopkeeper_message": ai_result.get(
+                "shopkeeper_message",
+                "阿柑店長看法：目前先觀察，不急著追高。"
+            ),
             "price": market_data.get("price"),
             "change": market_data.get("change"),
             "change_percent": market_data.get("change_percent"),
             "volume": market_data.get("volume"),
-            "trend": ai_result.get("trend"),
-            "ma_signal": ai_result.get("ma_signal"),
-            "macd_signal": ai_result.get("macd_signal"),
-            "rsi_signal": ai_result.get("rsi_signal"),
-            "ai_summary": ai_result.get("ai_summary"),
-            "explain": ai_result.get("explain"),
+            "trend": ai_result.get("trend") or market_data.get("trend"),
+            "ma_signal": ai_result.get("ma_signal") or market_data.get("ma_signal"),
+            "macd_signal": ai_result.get("macd_signal") or market_data.get("macd_signal"),
+            "rsi_signal": ai_result.get("rsi_signal") or market_data.get("rsi_signal"),
+            "ai_summary": ai_result.get("ai_summary", "目前資料不足，建議等待更多訊號。"),
+            "explain": ai_result.get("explain", "尚未產生完整解釋。"),
         }
 
         flex_message = build_stock_dashboard_flex(flex_data)
@@ -85,8 +108,14 @@ def handle_text_message(event: MessageEvent):
             )
 
     except Exception as e:
-        print(f"[Webhook Error] {e}")
-        reply_text(event.reply_token, "系統分析時發生錯誤，請稍後再試。")
+        print("=" * 80)
+        traceback.print_exc()
+        print("=" * 80)
+
+        reply_text(
+            event.reply_token,
+            f"錯誤：{type(e).__name__}\n{str(e)}"
+        )
 
 
 def reply_text(reply_token: str, text: str):
