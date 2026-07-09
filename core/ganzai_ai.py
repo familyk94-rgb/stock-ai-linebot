@@ -1,56 +1,49 @@
-from services.score_service import calculate_ai_index
-from services.strategy_service import get_strategy
-from services.risk_service import calculate_risk
-from services.decision_service import get_decision
-
-from core.health_engine import calculate_health
-from core.consensus_engine import calculate_consensus
-from core.explain_engine import explain_ai_index
-from core.shopkeeper_engine import get_shopkeeper_advice
+from core.engines.score_engine import ScoreEngine
 
 
-class GanzaiAI:
+class GanzaiAIv2:
+    """
+    GanzaiAI v2 Facade
 
-    def __init__(self, stock):
-        self.stock = stock
+    AI Core 的統一入口。
+    目前 Sprint 2-4 先串接 ScoreEngine。
+    後續再加入 RiskEngine、DecisionEngine、ConsensusEngine。
+    """
 
-        self.ai_index = None
-        self.health = None
-        self.consensus = None
-        self.strategy = None
-        self.risk = None
-        self.decision = None
-        self.explain = None
-        self.shopkeeper = None
+    def __init__(self, stock: dict):
+        self.stock = stock or {}
+        self.score_engine = ScoreEngine()
 
-    def run(self):
-
-        self.ai_index = calculate_ai_index(self.stock)
-        self.stock["ai_index"] = self.ai_index
-
-        self.health = calculate_health(self.stock)
-        self.consensus = calculate_consensus(self.stock)
-        self.strategy = get_strategy(self.stock)
-        self.risk = calculate_risk(self.stock)
-        self.decision = get_decision(self.stock)
-
-        self.explain = explain_ai_index(
-            self.stock,
-            {"ai_index": self.ai_index}
-        )
-
-        self.shopkeeper = get_shopkeeper_advice(
-            self.ai_index["score"],
-            self.risk["risk_score"]
-        )
+    def run(self) -> dict:
+        score_result = self.score_engine.run(self.stock)
 
         return {
-            "ai_index": self.ai_index,
-            "health": self.health,
-            "consensus": self.consensus,
-            "strategy": self.strategy,
-            "risk": self.risk,
-            "decision": self.decision,
-            "explain": self.explain,
-            "shopkeeper": self.shopkeeper,
+            "score": score_result.get("score"),
+            "star": score_result.get("star"),
+            "star_text": score_result.get("star_text"),
+            "grade": score_result.get("grade"),
+            "score_label": score_result.get("label"),
+            "score_color": score_result.get("color"),
+
+            "decision": "觀察",
+            "risk_level": "未評估",
+
+            "trend": self.stock.get("trend", "未判定"),
+            "ma_signal": self.stock.get("ma_signal", "未判定"),
+            "macd_signal": self.stock.get("macd_signal", "未判定"),
+            "rsi_signal": self.stock.get("rsi_signal", "未判定"),
+
+            "strategy": "觀望",
+
+            "shopkeeper_message": "阿柑店長看法：目前先觀察，等更多訊號確認。",
+            "ai_summary": "AI Core v2 已啟用，目前已完成 AI 評分模組。",
+            "explain": [
+                f"AI 分數為 {score_result.get('score')} 分。",
+                f"等級為 {score_result.get('grade')}，狀態為 {score_result.get('label')}。",
+                "目前 Sprint 2-4 先完成 Score Engine 串接。",
+            ],
+
+            "_raw": {
+                "score": score_result,
+            },
         }
