@@ -52,8 +52,16 @@ def handle_text_message(event: MessageEvent):
     try:
         market_data = get_market_info(stock_code)
 
+        print("=" * 80)
+        print("stock_code =", stock_code)
+        print("market_data =", market_data)
+        print("market_data type =", type(market_data))
+        print("=" * 80)
+
         if not isinstance(market_data, dict):
-            raise TypeError(f"market_data 應該是 dict，但收到 {type(market_data).__name__}")
+            raise TypeError(
+                f"market_data 應該是 dict，但收到 {type(market_data).__name__}"
+            )
 
         ai_result = ai_stock_analysis(stock_code, market_data)
 
@@ -72,7 +80,9 @@ def handle_text_message(event: MessageEvent):
             }
 
         if not isinstance(ai_result, dict):
-            raise TypeError(f"ai_result 應該是 dict 或 str，但收到 {type(ai_result).__name__}")
+            raise TypeError(
+                f"ai_result 應該是 dict 或 str，但收到 {type(ai_result).__name__}"
+            )
 
         flex_data = {
             "stock_code": stock_code,
@@ -92,8 +102,14 @@ def handle_text_message(event: MessageEvent):
             "ma_signal": ai_result.get("ma_signal") or market_data.get("ma_signal"),
             "macd_signal": ai_result.get("macd_signal") or market_data.get("macd_signal"),
             "rsi_signal": ai_result.get("rsi_signal") or market_data.get("rsi_signal"),
-            "ai_summary": ai_result.get("ai_summary", "目前資料不足，建議等待更多訊號。"),
-            "explain": ai_result.get("explain", "尚未產生完整解釋。"),
+            "ai_summary": ai_result.get(
+                "ai_summary",
+                "目前資料不足，建議等待更多訊號。"
+            ),
+            "explain": ai_result.get(
+                "explain",
+                "尚未產生完整解釋。"
+            ),
         }
 
         flex_message = build_stock_dashboard_flex(flex_data)
