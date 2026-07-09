@@ -8,7 +8,7 @@ def format_number(value):
     try:
         return f"{int(value):,}"
     except Exception:
-        return str(value)
+        return "-"
 
 
 def format_price(value):
@@ -17,41 +17,77 @@ def format_price(value):
             return f"{int(value):,}"
         return f"{float(value):,.2f}"
     except Exception:
-        return str(value)
+        return "-"
 
 
-def get_market_info(stock_id: str):
+def get_market_info(stock_id: str) -> dict:
     stock_id = str(stock_id).strip()
+
+    stock_name = get_stock_name(stock_id) or ""
 
     stock = get_stock_info(stock_id)
 
     if not stock:
-        return None
+        return {
+            "stock_id": stock_id,
+            "stock_code": stock_id,
+            "stock_name": stock_name,
+            "date": "-",
+            "price": None,
+            "open": None,
+            "high": None,
+            "low": None,
+            "change": None,
+            "change_percent": None,
+            "volume": None,
+            "price_text": "-",
+            "open_text": "-",
+            "high_text": "-",
+            "low_text": "-",
+            "volume_text": "-",
+            "trend": "資料不足",
+            "ma_signal": "資料不足",
+            "macd_signal": "資料不足",
+            "rsi_signal": "資料不足",
+            "technical": {},
+            "core": {},
+        }
 
-    technical = get_technical_indicators(stock_id)
-    stock_name = get_stock_name(stock_id)
+    technical = get_technical_indicators(stock_id) or {}
 
     stock_data = {
         "stock_id": stock_id,
+        "stock_code": stock_id,
         "stock_name": stock_name,
-        "date": stock["date"],
+        "date": stock.get("date", "-"),
 
-        "price": stock["close"],
-        "open": stock["open"],
-        "high": stock["max"],
-        "low": stock["min"],
-        "volume": stock["volume"],
+        "price": stock.get("close"),
+        "open": stock.get("open"),
+        "high": stock.get("max"),
+        "low": stock.get("min"),
+        "change": stock.get("change"),
+        "change_percent": stock.get("change_percent"),
+        "volume": stock.get("volume"),
 
-        "price_text": format_price(stock["close"]),
-        "open_text": format_price(stock["open"]),
-        "high_text": format_price(stock["max"]),
-        "low_text": format_price(stock["min"]),
-        "volume_text": format_number(stock["volume"]),
+        "price_text": format_price(stock.get("close")),
+        "open_text": format_price(stock.get("open")),
+        "high_text": format_price(stock.get("max")),
+        "low_text": format_price(stock.get("min")),
+        "volume_text": format_number(stock.get("volume")),
+
+        "trend": technical.get("trend", "未判定"),
+        "ma_signal": technical.get("ma_signal", "未判定"),
+        "macd_signal": technical.get("macd_signal", "未判定"),
+        "rsi_signal": technical.get("rsi_signal", "未判定"),
 
         "technical": technical,
     }
 
-    ai = GanzaiAI(stock_data)
-    stock_data["core"] = ai.run()
+    try:
+        ai = GanzaiAI(stock_data)
+        stock_data["core"] = ai.run() or {}
+    except Exception as e:
+        print(f"[GanzaiAI Error] {e}")
+        stock_data["core"] = {}
 
     return stock_data
