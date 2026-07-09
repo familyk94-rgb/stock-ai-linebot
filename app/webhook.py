@@ -2,21 +2,22 @@ import traceback
 
 from fastapi import APIRouter, Request, HTTPException
 
-from linebot.v3.webhook import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
-    Configuration,
     ApiClient,
+    Configuration,
+    FlexMessage,
     MessagingApi,
     ReplyMessageRequest,
     TextMessage,
 )
+from linebot.v3.webhook import WebhookHandler
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 
-from app.config import LINE_CHANNEL_SECRET, LINE_CHANNEL_ACCESS_TOKEN
-from services.market_service import get_market_info
-from services.ai_service import ai_stock_analysis
+from app.config import LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET
 from app.flex.builder import build_stock_dashboard_flex
+from services.ai_service import ai_stock_analysis
+from services.market_service import get_market_info
 
 
 router = APIRouter()
@@ -63,7 +64,7 @@ def handle_text_message(event: MessageEvent):
                 f"market_data 應該是 dict，但收到 {type(market_data).__name__}"
             )
 
-         ai_result = ai_stock_analysis(market_data)
+        ai_result = ai_stock_analysis(market_data)
 
         if isinstance(ai_result, str):
             ai_result = {
@@ -92,7 +93,7 @@ def handle_text_message(event: MessageEvent):
             "risk_level": ai_result.get("risk_level", "未評估"),
             "shopkeeper_message": ai_result.get(
                 "shopkeeper_message",
-                "阿柑店長看法：目前先觀察，不急著追高。"
+                "阿柑店長看法：目前先觀察，不急著追高。",
             ),
             "price": market_data.get("price"),
             "change": market_data.get("change"),
@@ -104,24 +105,17 @@ def handle_text_message(event: MessageEvent):
             "rsi_signal": ai_result.get("rsi_signal") or market_data.get("rsi_signal"),
             "ai_summary": ai_result.get(
                 "ai_summary",
-                "目前資料不足，建議等待更多訊號。"
+                "目前資料不足，建議等待更多訊號。",
             ),
             "explain": ai_result.get(
                 "explain",
-                "尚未產生完整解釋。"
+                "尚未產生完整解釋。",
             ),
         }
 
         flex_message = build_stock_dashboard_flex(flex_data)
 
-        with ApiClient(configuration) as api_client:
-            line_bot_api = MessagingApi(api_client)
-            line_bot_api.reply_message(
-                ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[flex_message],
-                )
-            )
+        reply_message(event.reply_token, flex_message)
 
     except Exception as e:
         print("=" * 80)
@@ -130,18 +124,23 @@ def handle_text_message(event: MessageEvent):
 
         reply_text(
             event.reply_token,
-            f"錯誤：{type(e).__name__}\n{str(e)}"
+            f"錯誤：{type(e).__name__}\n{str(e)}",
         )
 
 
-def reply_text(reply_token: str, text: str):
+def reply_message(reply_token: str, message):
     with ApiClient(configuration) as api_client:
         line_bot_api = MessagingApi(api_client)
         line_bot_api.reply_message(
             ReplyMessageRequest(
                 reply_token=reply_token,
-                messages=[
-                    TextMessage(text=text)
-                ],
+                messages=[message],
             )
         )
+
+
+def reply_text(reply_token: str, text: str):
+    reply_message(
+        reply_token,
+        TextMessage(text=text),
+    )
