@@ -1,37 +1,23 @@
-def build_explain_card(stock):
-    core = stock.get("core") or {}
-    explain = core.get("explain") or {}
-
-    score_reason = explain.get("score_reason") or []
-    summary = explain.get("summary") or []
-
-    reason_text = "\n".join(score_reason)
-    summary_text = "\n".join([f"• {item}" for item in summary])
-
+def build_explain_card(explain: str | None = None) -> dict:
     return {
         "type": "box",
         "layout": "vertical",
-        "margin": "lg",
+        "paddingAll": "16px",
         "spacing": "sm",
         "contents": [
             {
                 "type": "text",
-                "text": "🧠 AI 解釋",
+                "text": "分析原因",
                 "weight": "bold",
-                "size": "lg"
+                "size": "md",
+                "color": "#111827",
             },
             {
                 "type": "text",
-                "text": reason_text,
+                "text": explain or "尚未產生完整解釋。",
                 "size": "sm",
-                "wrap": True
-            },
-            {
-                "type": "text",
-                "text": summary_text,
-                "size": "sm",
+                "color": "#374151",
                 "wrap": True,
-                "margin": "md"
-            }
-        ]
+            },
+        ],
     }

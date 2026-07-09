@@ -1,22 +1,23 @@
-def build_analysis_card(ai_text):
+def build_analysis_card(summary: str | None = None) -> dict:
     return {
         "type": "box",
         "layout": "vertical",
-        "margin": "lg",
+        "paddingAll": "16px",
         "spacing": "sm",
         "contents": [
             {
                 "type": "text",
-                "text": "🏪 阿柑店長分析",
+                "text": "AI 分析",
                 "weight": "bold",
-                "size": "lg",
-                "color": "#111827"
+                "size": "md",
+                "color": "#111827",
             },
             {
                 "type": "text",
-                "text": ai_text,
+                "text": summary or "目前資料不足，建議等待更多訊號。",
+                "size": "sm",
+                "color": "#374151",
                 "wrap": True,
-                "size": "sm"
-            }
-        ]
+            },
+        ],
     }

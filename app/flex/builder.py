@@ -1,5 +1,4 @@
-import json
-from linebot.v3.messaging import FlexMessage, FlexContainer
+from linebot.v3.messaging import FlexContainer, FlexMessage
 
 from app.flex.header import build_header
 from app.flex.dashboard_card import build_dashboard_card
@@ -10,57 +9,74 @@ from app.flex.analysis_card import build_analysis_card
 from app.flex.explain_card import build_explain_card
 
 
-def build_stock_dashboard_flex(stock, ai_text):
-    body_contents = [
-        build_dashboard_card(stock),
+def build_stock_dashboard_bubble(data: dict | None = None) -> dict:
+    data = data or {}
 
-        {"type": "separator", "margin": "lg"},
+    stock_code = str(data.get("stock_code", ""))
+    stock_name = str(data.get("stock_name", ""))
 
-        build_shopkeeper_card(stock),
-
-        {"type": "separator", "margin": "lg"},
-
-        build_market_card(stock),
-
-        {"type": "separator", "margin": "lg"},
-
-        build_technical_card(stock),
-
-        {"type": "separator", "margin": "lg"},
-
-        build_analysis_card(ai_text),
-
-        {"type": "separator", "margin": "lg"},
-
-        build_explain_card(stock),
-    ]
-
-    bubble = {
+    return {
         "type": "bubble",
-        "size": "giga",
-        "header": build_header(stock),
+        "size": "mega",
+        "header": build_header(
+            stock_code=stock_code,
+            stock_name=stock_name,
+        ),
         "body": {
             "type": "box",
             "layout": "vertical",
             "spacing": "md",
-            "contents": body_contents,
+            "contents": [
+                build_dashboard_card(
+                    score=data.get("score"),
+                    decision=data.get("decision"),
+                    risk_level=data.get("risk_level"),
+                ),
+                build_shopkeeper_card(
+                    message=data.get("shopkeeper_message"),
+                ),
+                build_market_card(
+                    price=data.get("price"),
+                    change=data.get("change"),
+                    change_percent=data.get("change_percent"),
+                    volume=data.get("volume"),
+                ),
+                build_technical_card(
+                    trend=data.get("trend"),
+                    ma_signal=data.get("ma_signal"),
+                    macd_signal=data.get("macd_signal"),
+                    rsi_signal=data.get("rsi_signal"),
+                ),
+                build_analysis_card(
+                    summary=data.get("ai_summary"),
+                ),
+                build_explain_card(
+                    explain=data.get("explain"),
+                ),
+            ],
         },
         "footer": {
             "type": "box",
             "layout": "vertical",
+            "spacing": "sm",
             "contents": [
                 {
                     "type": "text",
-                    "text": "⚠️ 本內容僅供研究參考，不構成任何投資建議。",
+                    "text": "本內容僅供參考，非投資建議",
                     "size": "xs",
-                    "wrap": True,
                     "color": "#9CA3AF",
+                    "align": "center",
+                    "wrap": True,
                 }
             ],
         },
     }
 
+
+def build_stock_dashboard_flex(data: dict | None = None) -> FlexMessage:
+    bubble = build_stock_dashboard_bubble(data)
+
     return FlexMessage(
-        alt_text=f"{stock['stock_name']} AI 投資儀表板",
-        contents=FlexContainer.from_json(json.dumps(bubble, ensure_ascii=False)),
+        alt_text="股市柑仔店 AI Pro 股票分析",
+        contents=FlexContainer.from_dict(bubble),
     )

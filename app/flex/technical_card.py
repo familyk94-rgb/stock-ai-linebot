@@ -1,52 +1,49 @@
-def build_technical_card(stock):
-    t = stock.get("technical") or {}
-
+def build_technical_card(
+    trend: str | None = None,
+    ma_signal: str | None = None,
+    macd_signal: str | None = None,
+    rsi_signal: str | None = None,
+) -> dict:
     return {
         "type": "box",
         "layout": "vertical",
-        "margin": "lg",
+        "paddingAll": "16px",
         "spacing": "sm",
         "contents": [
             {
                 "type": "text",
-                "text": "📈 技術分析",
+                "text": "技術分析",
                 "weight": "bold",
-                "size": "lg"
+                "size": "md",
+                "color": "#111827",
+            },
+            _row("趨勢", trend or "未判定"),
+            _row("均線", ma_signal or "未判定"),
+            _row("MACD", macd_signal or "未判定"),
+            _row("RSI", rsi_signal or "未判定"),
+        ],
+    }
+
+
+def _row(label: str, value: str) -> dict:
+    return {
+        "type": "box",
+        "layout": "horizontal",
+        "contents": [
+            {
+                "type": "text",
+                "text": label,
+                "size": "sm",
+                "color": "#6B7280",
+                "flex": 1,
             },
             {
                 "type": "text",
-                "text": f"MA5：{t.get('ma5')}",
-                "size": "sm"
+                "text": value,
+                "size": "sm",
+                "align": "end",
+                "weight": "bold",
+                "flex": 2,
             },
-            {
-                "type": "text",
-                "text": f"MA10：{t.get('ma10')}",
-                "size": "sm"
-            },
-            {
-                "type": "text",
-                "text": f"MA20：{t.get('ma20')}",
-                "size": "sm"
-            },
-            {
-                "type": "text",
-                "text": f"MA60：{t.get('ma60')}",
-                "size": "sm"
-            },
-            {
-                "type": "text",
-                "text": f"RSI：{t.get('rsi')}",
-                "size": "sm"
-            },
-            {
-                "type": "text",
-                "text": f"KD：K {t.get('k')} / D {t.get('d')}",
-                "size": "sm"
-            },
-            {
-                "type": "text",
-                "text": f"MACD：{t.get('macd')}",
-                "size": "sm"
-            },
-        ]
+        ],
     }

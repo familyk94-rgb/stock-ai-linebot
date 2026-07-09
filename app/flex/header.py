@@ -1,31 +1,26 @@
-def build_header(stock):
+def build_header(stock_code: str, stock_name: str = "") -> dict:
+    title = f"{stock_code} {stock_name}".strip()
+
     return {
         "type": "box",
         "layout": "vertical",
-        "backgroundColor": "#111827",
-        "paddingAll": "20px",
+        "paddingAll": "16px",
+        "backgroundColor": "#1F2937",
         "contents": [
             {
                 "type": "text",
-                "text": "🏪 股市柑仔店 AI Pro",
-                "weight": "bold",
-                "color": "#FBBF24",
-                "size": "md"
-            },
-            {
-                "type": "text",
-                "text": f"{stock['stock_name']}（{stock['stock_id']}）",
-                "weight": "bold",
-                "size": "xxl",
-                "color": "#FFFFFF",
-                "margin": "lg"
-            },
-            {
-                "type": "text",
-                "text": f"資料日期：{stock['date']}",
+                "text": "股市柑仔店 AI Pro",
                 "size": "sm",
-                "color": "#D1D5DB",
-                "margin": "md"
-            }
-        ]
+                "color": "#FBBF24",
+                "weight": "bold",
+            },
+            {
+                "type": "text",
+                "text": title or "股票分析",
+                "size": "xl",
+                "color": "#FFFFFF",
+                "weight": "bold",
+                "margin": "sm",
+            },
+        ],
     }
