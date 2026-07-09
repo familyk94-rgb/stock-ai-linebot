@@ -63,7 +63,7 @@ def handle_text_message(event: MessageEvent):
                 f"market_data 應該是 dict，但收到 {type(market_data).__name__}"
             )
 
-        ai_result = ai_stock_analysis(stock_code, market_data)
+         ai_result = ai_stock_analysis(market_data)
 
         if isinstance(ai_result, str):
             ai_result = {
