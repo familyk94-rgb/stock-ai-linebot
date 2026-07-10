@@ -47,7 +47,7 @@ def build_analysis_sections(stock: dict) -> dict:
             "詳細原因",
             f"技術面：\n{_technical_reason(core, technical)}",
             _fundamental_section(stock.get("financial")),
-            f"籌碼面：{_data_status(stock.get('institution'))}",
+            _institution_section(stock.get("institution")),
             f"市場情緒：{_market_sentiment(core, trend)}",
             f"操作建議：{action}。",
             f"風險提醒：{_risk_warning(core, risk_level)}",
@@ -182,6 +182,36 @@ def _fundamental_section(financial) -> str:
     summary = str(financial.get("summary") or "尚未整合")
     lines.append(f"AI判定：{summary}")
     return "基本面：\n" + "\n".join(lines)
+
+
+def _institution_section(institution) -> str:
+    if not isinstance(institution, dict) or not institution.get("available"):
+        return "籌碼面：尚未整合"
+
+    fields = [
+        ("外資", "foreign_buy_sell"),
+        ("投信", "investment_buy_sell"),
+        ("自營商", "dealer_buy_sell"),
+        ("三大法人", "three_major_buy_sell"),
+    ]
+    lines = []
+    for label, key in fields:
+        value = _finite_number(institution.get(key))
+        if value is not None:
+            lines.append(f"{label}：{_format_buy_sell(value)}")
+
+    summary = str(institution.get("summary") or "尚未整合")
+    lines.append(f"AI判定：{summary}")
+    return "籌碼面：\n" + "\n".join(lines)
+
+
+def _format_buy_sell(value: float) -> str:
+    if value == 0:
+        return "持平"
+    amount = abs(value)
+    amount_text = f"{int(amount):,}" if amount.is_integer() else f"{amount:,.2f}"
+    action = "買超" if value > 0 else "賣超"
+    return f"{action} {amount_text} 張"
 
 
 def _format_confidence(confidence) -> str:

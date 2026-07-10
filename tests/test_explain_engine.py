@@ -83,3 +83,82 @@ def test_none_fundamental_values_are_omitted():
     assert "殖利率：2.0%" in explain
     assert "月營收YoY：" not in explain
     assert "AI判定：基本面偏弱" in explain
+
+
+def _institution_explain(institution: dict) -> str:
+    return build_analysis_sections({"institution": institution})["explain"]
+
+
+def test_unavailable_institution_remains_unintegrated():
+    explain = _institution_explain({"available": False})
+
+    assert "籌碼面：尚未整合" in explain
+
+
+def test_all_institutions_buy_and_summary_is_preserved():
+    explain = _institution_explain(
+        {
+            "available": True,
+            "foreign_buy_sell": 12345,
+            "investment_buy_sell": 2100,
+            "dealer_buy_sell": 500,
+            "three_major_buy_sell": 14945,
+            "summary": "籌碼偏多",
+        }
+    )
+
+    assert "外資：買超 12,345 張" in explain
+    assert "投信：買超 2,100 張" in explain
+    assert "自營商：買超 500 張" in explain
+    assert "三大法人：買超 14,945 張" in explain
+    assert "AI判定：籌碼偏多" in explain
+
+
+def test_all_institutions_sell():
+    explain = _institution_explain(
+        {
+            "available": True,
+            "foreign_buy_sell": -8200,
+            "investment_buy_sell": -1000,
+            "dealer_buy_sell": -300,
+            "three_major_buy_sell": -9500,
+            "summary": "籌碼偏空",
+        }
+    )
+
+    assert "外資：賣超 8,200 張" in explain
+    assert "投信：賣超 1,000 張" in explain
+    assert "自營商：賣超 300 張" in explain
+    assert "三大法人：賣超 9,500 張" in explain
+    assert "AI判定：籌碼偏空" in explain
+
+
+def test_missing_institution_values_are_omitted():
+    explain = _institution_explain(
+        {
+            "available": True,
+            "foreign_buy_sell": 100,
+            "investment_buy_sell": None,
+            "dealer_buy_sell": None,
+            "three_major_buy_sell": 100,
+            "summary": "籌碼中性偏多",
+        }
+    )
+
+    assert "外資：買超 100 張" in explain
+    assert "投信：" not in explain
+    assert "自營商：" not in explain
+    assert "三大法人：買超 100 張" in explain
+
+
+def test_flat_institution_is_displayed():
+    explain = _institution_explain(
+        {
+            "available": True,
+            "foreign_buy_sell": 0,
+            "summary": "籌碼中性",
+        }
+    )
+
+    assert "外資：持平" in explain
+    assert "AI判定：籌碼中性" in explain
