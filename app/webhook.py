@@ -90,16 +90,8 @@ def handle_text_message(event: MessageEvent):
 
         if isinstance(ai_result, str):
             ai_result = {
-                "score": None,
-                "decision": "觀察",
-                "risk_level": "未評估",
-                "shopkeeper_message": "阿柑店長看法：目前先觀察，不急著追高。",
-                "trend": market_data.get("trend"),
-                "ma_signal": market_data.get("ma_signal"),
-                "macd_signal": market_data.get("macd_signal"),
-                "rsi_signal": market_data.get("rsi_signal"),
                 "ai_summary": ai_result,
-                "explain": ai_result,
+                "explain": "詳細原因\n目前無法取得完整分析原因。",
             }
 
         if not isinstance(ai_result, dict):
