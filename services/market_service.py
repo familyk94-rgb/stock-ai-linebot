@@ -2,6 +2,7 @@ from services.stock_service import get_stock_info
 from services.technical_service import get_technical_indicators
 from services.stock_name_service import get_stock_name
 from core.ganzai_ai import GanzaiAI
+from core.data_quality import calculate_data_completeness
 
 
 def format_number(value):
@@ -50,7 +51,7 @@ def get_market_info(stock_id: str) -> dict:
             "macd_signal": "資料不足",
             "rsi_signal": "資料不足",
             "technical": {},
-            "core": {},
+            "core": {"data_completeness": 0},
         }
 
     technical = get_technical_indicators(stock_id) or {}
@@ -88,6 +89,8 @@ def get_market_info(stock_id: str) -> dict:
         stock_data["core"] = ai.run() or {}
     except Exception as e:
         print(f"[GanzaiAI Error] {e}")
-        stock_data["core"] = {}
+        stock_data["core"] = {
+            "data_completeness": calculate_data_completeness(stock_data)
+        }
 
     return stock_data

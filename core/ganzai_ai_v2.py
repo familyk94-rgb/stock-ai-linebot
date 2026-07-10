@@ -1,6 +1,8 @@
 from core.engines.score_engine import ScoreEngine
 from core.engines.decision_engine import DecisionEngine
 from core.engines.consensus_engine import ConsensusEngine
+from core.consensus_engine import calculate_consensus
+from core.data_quality import calculate_confidence, calculate_data_completeness
 
 
 class GanzaiAIv2:
@@ -28,10 +30,18 @@ class GanzaiAIv2:
         }
 
         score_result = self.score_engine.run(stock_with_consensus)
-        decision_result = self.decision_engine.run(score_result)
+        data_completeness = calculate_data_completeness(stock_with_consensus)
+        consensus_score = calculate_consensus(stock_with_consensus).get("consensus_score")
+        confidence = calculate_confidence(
+            stock_with_consensus,
+            consensus_score,
+            consensus_result,
+        )
+        decision_result = self.decision_engine.run(score_result, confidence)
 
         return {
             "score": score_result.get("score"),
+            "data_completeness": data_completeness,
             "star": score_result.get("star"),
             "star_text": score_result.get("star_text"),
             "grade": score_result.get("grade"),
@@ -39,7 +49,7 @@ class GanzaiAIv2:
             "score_color": score_result.get("color"),
 
             "decision": decision_result.get("decision"),
-            "confidence": decision_result.get("confidence"),
+            "confidence": confidence,
             "decision_action": decision_result.get("action"),
             "decision_color": decision_result.get("color"),
             "decision_emoji": decision_result.get("emoji"),

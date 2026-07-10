@@ -104,13 +104,26 @@ def _long_term_advice(stock: dict) -> str:
 
 
 def _technical_reason(core: dict, technical: dict) -> str:
-    signals = [
-        core.get("ma_signal") or "均線未判定",
-        core.get("macd_signal") or "MACD未判定",
-        core.get("rsi_signal") or "RSI未判定",
-        core.get("kd_signal") or "KD未判定",
+    indicators = [
+        ("均線", core.get("ma_signal") or "未判定"),
+        ("MACD", core.get("macd_signal") or "未判定"),
+        ("RSI", core.get("rsi_signal") or "未判定"),
+        ("KD", core.get("kd_signal") or "未判定"),
     ]
-    return "、".join(signals) + "。"
+    formatted = [
+        f"{indicator}：{_dedupe_indicator_signal(signal)}"
+        for indicator, signal in indicators
+    ]
+    return "、".join(formatted) + "。"
+
+
+def _dedupe_indicator_signal(signal) -> str:
+    if isinstance(signal, (list, tuple)):
+        parts = [str(item).strip() for item in signal]
+    else:
+        parts = [item.strip() for item in str(signal).split("、")]
+    unique_parts = list(dict.fromkeys(item for item in parts if item))
+    return "、".join(unique_parts) or "未判定"
 
 
 def _market_sentiment(core: dict, trend: str) -> str:

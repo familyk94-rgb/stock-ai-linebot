@@ -2,21 +2,21 @@ class DecisionEngine:
     """
     Decision Engine v1.0
 
-    根據 AI Score 產生：
+    根據 AI Score 與獨立信心度產生：
     - decision 決策
-    - confidence 信心值
+    - confidence 信心值（由呼叫端提供，不由 score 推導）
     - action 操作方向
     - color 顏色
     """
 
-    def run(self, score_result: dict) -> dict:
+    def run(self, score_result: dict, confidence: int) -> dict:
         score = int(score_result.get("score", 0))
 
         decision = self._decision(score)
 
         return {
             "decision": decision["decision"],
-            "confidence": self._confidence(score),
+            "confidence": max(0, min(100, int(confidence))),
             "action": decision["action"],
             "color": decision["color"],
             "emoji": decision["emoji"],
@@ -77,18 +77,3 @@ class DecisionEngine:
             "color": "#991B1B",
             "emoji": "⛔",
         }
-
-    def _confidence(self, score: int) -> int:
-        if score >= 90:
-            return 95
-        if score >= 80:
-            return 90
-        if score >= 70:
-            return 85
-        if score >= 60:
-            return 75
-        if score >= 50:
-            return 70
-        if score >= 40:
-            return 80
-        return 90
