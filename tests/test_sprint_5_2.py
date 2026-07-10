@@ -29,7 +29,18 @@ def _complete_stock() -> dict:
     }
 
 
-def test_same_signal_from_macd_and_kd_is_preserved():
+def _technical_lines(stock: dict) -> list[str]:
+    result = build_analysis_sections(stock)
+    lines = result["explain"].splitlines()
+    start = lines.index("技術面：") + 1
+    end = next(
+        (index for index in range(start, len(lines)) if lines[index].startswith("基本面：")),
+        len(lines),
+    )
+    return lines[start:end]
+
+
+def test_macd_and_kd_death_cross_are_combined():
     stock = {
         "core": {
             "ma_signal": "站上 MA20",
@@ -39,16 +50,55 @@ def test_same_signal_from_macd_and_kd_is_preserved():
         }
     }
 
-    result = build_analysis_sections(stock)
-    technical_line = next(
-        line for line in result["explain"].splitlines() if line.startswith("技術面：")
-    )
+    lines = _technical_lines(stock)
 
-    assert "均線：站上 MA20" in technical_line
-    assert "MACD：死亡交叉" in technical_line
-    assert "RSI：50.4（健康區間）" in technical_line
-    assert "KD：死亡交叉" in technical_line
-    assert technical_line.count("死亡交叉") == 2
+    assert "動能：MACD、KD 均呈死亡交叉" in lines
+    assert "MACD：死亡交叉" not in lines
+    assert "KD：死亡交叉" not in lines
+
+
+def test_macd_and_kd_golden_cross_are_combined():
+    stock = {
+        "core": {
+            "macd_signal": "黃金交叉",
+            "kd_signal": "黃金交叉",
+        }
+    }
+
+    lines = _technical_lines(stock)
+
+    assert "動能：MACD、KD 均呈黃金交叉" in lines
+
+
+def test_different_macd_and_kd_signals_are_not_combined():
+    stock = {
+        "core": {
+            "macd_signal": "死亡交叉",
+            "kd_signal": "黃金交叉",
+        }
+    }
+
+    lines = _technical_lines(stock)
+
+    assert "MACD：死亡交叉" in lines
+    assert "KD：黃金交叉" in lines
+    assert not any(line.startswith("動能：") for line in lines)
+
+
+def test_ma_and_rsi_text_are_unchanged():
+    stock = {
+        "core": {
+            "ma_signal": "站上 MA20",
+            "macd_signal": "死亡交叉",
+            "rsi_signal": "51.6（健康區間）",
+            "kd_signal": "死亡交叉",
+        }
+    }
+
+    lines = _technical_lines(stock)
+
+    assert "均線：站上 MA20" in lines
+    assert "RSI：51.6（健康區間）" in lines
 
 
 def test_duplicate_signal_within_same_indicator_is_removed():
@@ -58,13 +108,10 @@ def test_duplicate_signal_within_same_indicator_is_removed():
         }
     }
 
-    result = build_analysis_sections(stock)
-    technical_line = next(
-        line for line in result["explain"].splitlines() if line.startswith("技術面：")
-    )
+    lines = _technical_lines(stock)
 
-    assert "MACD：死亡交叉" in technical_line
-    assert technical_line.count("死亡交叉") == 1
+    assert "MACD：死亡交叉" in lines
+    assert sum(line.count("死亡交叉") for line in lines) == 1
 
 
 def test_score_and_confidence_are_independent():

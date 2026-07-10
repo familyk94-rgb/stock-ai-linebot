@@ -42,7 +42,7 @@ def build_analysis_sections(stock: dict) -> dict:
     details = "\n".join(
         [
             "詳細原因",
-            f"技術面：{_technical_reason(core, technical)}",
+            f"技術面：\n{_technical_reason(core, technical)}",
             f"基本面：{_data_status(stock.get('financial'))}",
             f"籌碼面：{_data_status(stock.get('institution'))}",
             f"市場情緒：{_market_sentiment(core, trend)}",
@@ -104,17 +104,27 @@ def _long_term_advice(stock: dict) -> str:
 
 
 def _technical_reason(core: dict, technical: dict) -> str:
-    indicators = [
-        ("均線", core.get("ma_signal") or "未判定"),
-        ("MACD", core.get("macd_signal") or "未判定"),
-        ("RSI", core.get("rsi_signal") or "未判定"),
-        ("KD", core.get("kd_signal") or "未判定"),
-    ]
-    formatted = [
-        f"{indicator}：{_dedupe_indicator_signal(signal)}"
-        for indicator, signal in indicators
-    ]
-    return "、".join(formatted) + "。"
+    return "\n".join(_format_technical_signals(core))
+
+
+def _format_technical_signals(core: dict) -> list[str]:
+    ma_signal = _dedupe_indicator_signal(core.get("ma_signal") or "未判定")
+    macd_signal = _dedupe_indicator_signal(core.get("macd_signal") or "未判定")
+    rsi_signal = _dedupe_indicator_signal(core.get("rsi_signal") or "未判定")
+    kd_signal = _dedupe_indicator_signal(core.get("kd_signal") or "未判定")
+
+    lines = [f"均線：{ma_signal}"]
+    if macd_signal == kd_signal and macd_signal in {"死亡交叉", "黃金交叉"}:
+        lines.append(f"動能：MACD、KD 均呈{macd_signal}")
+    else:
+        lines.extend(
+            [
+                f"MACD：{macd_signal}",
+                f"KD：{kd_signal}",
+            ]
+        )
+    lines.append(f"RSI：{rsi_signal}")
+    return lines
 
 
 def _dedupe_indicator_signal(signal) -> str:
