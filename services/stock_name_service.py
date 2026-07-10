@@ -6,6 +6,7 @@ from app.config import FINMIND_API_TOKEN
 
 CACHE_FILE = "data/stock_names.json"
 CACHE_DAYS = 7
+REQUEST_TIMEOUT = 10
 
 
 def is_cache_valid():
@@ -24,7 +25,12 @@ def download_stock_names():
         "token": FINMIND_API_TOKEN,
     }
 
-    response = requests.get(url, params=params)
+    try:
+        response = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+    except requests.exceptions.Timeout:
+        return {}
+    except requests.exceptions.RequestException:
+        return {}
 
     if response.status_code != 200:
         return {}

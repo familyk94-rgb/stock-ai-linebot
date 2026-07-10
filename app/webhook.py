@@ -1,4 +1,4 @@
-import traceback
+﻿import logging
 
 from fastapi import APIRouter, Request, HTTPException
 
@@ -21,6 +21,7 @@ from services.market_service import get_market_info
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
@@ -36,6 +37,9 @@ async def line_webhook(request: Request):
         handler.handle(body_text, signature)
     except InvalidSignatureError:
         raise HTTPException(status_code=400, detail="Invalid signature")
+    except Exception:
+        logger.exception("LINE webhook handling failed")
+        return {"status": "error"}
 
     return {"status": "ok"}
 
@@ -53,18 +57,36 @@ def handle_text_message(event: MessageEvent):
     try:
         market_data = get_market_info(stock_code)
 
-        print("=" * 80)
-        print("stock_code =", stock_code)
-        print("market_data =", market_data)
-        print("market_data type =", type(market_data))
-        print("=" * 80)
-
         if not isinstance(market_data, dict):
             raise TypeError(
                 f"market_data 應該是 dict，但收到 {type(market_data).__name__}"
             )
 
-        ai_result = ai_stock_analysis(market_data)
+        logger.info(
+            "Market data loaded",
+            extra={
+                "stock_code": stock_code,
+                "has_price": market_data.get("price") is not None,
+                "has_core": bool(market_data.get("core")),
+            },
+        )
+
+        if market_data.get("price") is None:
+            reply_text(
+                event.reply_token,
+                "目前暫時查不到這檔股票的市場資料，可能是資料來源逾時或代號有誤，請稍後再試。",
+            )
+            return
+
+        try:
+            ai_result = ai_stock_analysis(market_data)
+        except Exception:
+            logger.exception("AI analysis failed", extra={"stock_code": stock_code})
+            reply_text(
+                event.reply_token,
+                "市場資料已取得，但 AI 分析服務暫時無法完成，請稍後再試。",
+            )
+            return
 
         if isinstance(ai_result, str):
             ai_result = {
@@ -117,14 +139,12 @@ def handle_text_message(event: MessageEvent):
 
         reply_message(event.reply_token, flex_message)
 
-    except Exception as e:
-        print("=" * 80)
-        traceback.print_exc()
-        print("=" * 80)
+    except Exception:
+        logger.exception("LINE message handling failed", extra={"stock_code": stock_code})
 
         reply_text(
             event.reply_token,
-            f"錯誤：{type(e).__name__}\n{str(e)}",
+            "系統暫時無法完成查詢，請稍後再試。",
         )
 
 

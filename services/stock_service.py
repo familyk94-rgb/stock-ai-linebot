@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TOKEN = os.getenv("FINMIND_API_TOKEN")
+REQUEST_TIMEOUT = 10
 
 
 def get_stock_info(stock_id: str):
@@ -20,7 +21,12 @@ def get_stock_info(stock_id: str):
         "token": TOKEN,
     }
 
-    r = requests.get(url, params=params)
+    try:
+        r = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+    except requests.exceptions.Timeout:
+        return None
+    except requests.exceptions.RequestException:
+        return None
 
     if r.status_code != 200:
         return None
@@ -60,7 +66,12 @@ def get_stock_history(stock_id: str, days: int = 250):
         "token": TOKEN,
     }
 
-    r = requests.get(url, params=params)
+    try:
+        r = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+    except requests.exceptions.Timeout:
+        return []
+    except requests.exceptions.RequestException:
+        return []
 
     if r.status_code != 200:
         return []

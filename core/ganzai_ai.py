@@ -47,3 +47,6 @@ class GanzaiAIv2:
                 "score": score_result,
             },
         }
+
+
+GanzaiAI = GanzaiAIv2
