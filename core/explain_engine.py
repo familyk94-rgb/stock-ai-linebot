@@ -1,3 +1,6 @@
+import math
+
+
 def explain_ai_index(stock, analysis):
     ai_index = analysis.get("ai_index") or {}
     details = ai_index.get("details") or {}
@@ -43,7 +46,7 @@ def build_analysis_sections(stock: dict) -> dict:
         [
             "詳細原因",
             f"技術面：\n{_technical_reason(core, technical)}",
-            f"基本面：{_data_status(stock.get('financial'))}",
+            _fundamental_section(stock.get("financial")),
             f"籌碼面：{_data_status(stock.get('institution'))}",
             f"市場情緒：{_market_sentiment(core, trend)}",
             f"操作建議：{action}。",
@@ -98,7 +101,8 @@ def _mid_term_advice(stock: dict, core: dict, technical: dict) -> str:
 
 
 def _long_term_advice(stock: dict) -> str:
-    if not stock.get("financial"):
+    financial = stock.get("financial") or {}
+    if not financial.get("available"):
         return "基本面資料尚未整合，暫不做長線定論。"
     return "需持續追蹤基本面變化，不宜只依技術訊號決策。"
 
@@ -158,6 +162,28 @@ def _data_status(data) -> str:
     return "已有資料，建議搭配趨勢持續追蹤。" if data else "尚未整合"
 
 
+def _fundamental_section(financial) -> str:
+    if not isinstance(financial, dict) or not financial.get("available"):
+        return "基本面：尚未整合"
+
+    fields = [
+        ("EPS", "eps", 2, ""),
+        ("本益比(PER)", "pe", 1, ""),
+        ("股價淨值比(PBR)", "pb", 1, ""),
+        ("殖利率", "dividend_yield", 1, "%"),
+        ("月營收YoY", "revenue_growth", 1, "%"),
+    ]
+    lines = []
+    for label, key, decimals, suffix in fields:
+        value = _finite_number(financial.get(key))
+        if value is not None:
+            lines.append(f"{label}：{value:.{decimals}f}{suffix}")
+
+    summary = str(financial.get("summary") or "尚未整合")
+    lines.append(f"AI判定：{summary}")
+    return "基本面：\n" + "\n".join(lines)
+
+
 def _format_confidence(confidence) -> str:
     value = _number(confidence)
     return "尚未評估" if value is None else f"{value:g}%"
@@ -168,3 +194,8 @@ def _number(value):
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _finite_number(value):
+    number = _number(value)
+    return number if number is not None and math.isfinite(number) else None
