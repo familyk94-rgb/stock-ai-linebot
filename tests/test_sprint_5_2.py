@@ -37,7 +37,12 @@ def _technical_lines(stock: dict) -> list[str]:
         (index for index in range(start, len(lines)) if lines[index].startswith("基本面：")),
         len(lines),
     )
-    return lines[start:end]
+    return [line for line in lines[start:end] if line]
+
+
+def _assert_label_value(lines: list[str], label: str, value: str):
+    label_index = lines.index(label)
+    assert lines[label_index + 1] == value
 
 
 def test_macd_and_kd_death_cross_are_combined():
@@ -52,9 +57,9 @@ def test_macd_and_kd_death_cross_are_combined():
 
     lines = _technical_lines(stock)
 
-    assert "動能：MACD、KD 均呈死亡交叉" in lines
-    assert "MACD：死亡交叉" not in lines
-    assert "KD：死亡交叉" not in lines
+    _assert_label_value(lines, "動能：", "MACD、KD 死亡交叉")
+    assert "MACD：" not in lines
+    assert "KD：" not in lines
 
 
 def test_macd_and_kd_golden_cross_are_combined():
@@ -67,7 +72,7 @@ def test_macd_and_kd_golden_cross_are_combined():
 
     lines = _technical_lines(stock)
 
-    assert "動能：MACD、KD 均呈黃金交叉" in lines
+    _assert_label_value(lines, "動能：", "MACD、KD 黃金交叉")
 
 
 def test_different_macd_and_kd_signals_are_not_combined():
@@ -80,9 +85,9 @@ def test_different_macd_and_kd_signals_are_not_combined():
 
     lines = _technical_lines(stock)
 
-    assert "MACD：死亡交叉" in lines
-    assert "KD：黃金交叉" in lines
-    assert not any(line.startswith("動能：") for line in lines)
+    _assert_label_value(lines, "MACD：", "死亡交叉")
+    _assert_label_value(lines, "KD：", "黃金交叉")
+    assert "動能：" not in lines
 
 
 def test_ma_and_rsi_text_are_unchanged():
@@ -97,8 +102,8 @@ def test_ma_and_rsi_text_are_unchanged():
 
     lines = _technical_lines(stock)
 
-    assert "均線：站上 MA20" in lines
-    assert "RSI：51.6（健康區間）" in lines
+    _assert_label_value(lines, "均線：", "站上 MA20")
+    _assert_label_value(lines, "RSI：", "51.6（健康區間）")
 
 
 def test_duplicate_signal_within_same_indicator_is_removed():
@@ -110,7 +115,7 @@ def test_duplicate_signal_within_same_indicator_is_removed():
 
     lines = _technical_lines(stock)
 
-    assert "MACD：死亡交叉" in lines
+    _assert_label_value(lines, "MACD：", "死亡交叉")
     assert sum(line.count("死亡交叉") for line in lines) == 1
 
 

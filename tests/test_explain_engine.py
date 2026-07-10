@@ -21,9 +21,9 @@ def test_fundamental_with_only_eps():
         }
     )
 
-    assert "EPS：5.26" in explain
+    assert "EPS：\n5.26" in explain
     assert "本益比(PER)：" not in explain
-    assert "AI判定：基本面中性" in explain
+    assert "AI判定：\n基本面中性" in explain
 
 
 def test_fundamental_with_only_per():
@@ -35,7 +35,7 @@ def test_fundamental_with_only_per():
         }
     )
 
-    assert "本益比(PER)：18.3" in explain
+    assert "本益比(PER)：\n18.3" in explain
     assert "EPS：" not in explain
 
 
@@ -53,13 +53,13 @@ def test_all_fundamental_values_are_formatted_in_order():
     )
 
     expected = (
-        "基本面：\n"
-        "EPS：5.26\n"
-        "本益比(PER)：18.3\n"
-        "股價淨值比(PBR)：2.5\n"
-        "殖利率：3.2%\n"
-        "月營收YoY：12.6%\n"
-        "AI判定：基本面偏佳"
+        "基本面：\n\n"
+        "EPS：\n5.26\n\n"
+        "本益比(PER)：\n18.3\n\n"
+        "股價淨值比(PBR)：\n2.5\n\n"
+        "殖利率：\n3.2%\n\n"
+        "月營收 YoY：\n12.6%\n\n"
+        "AI判定：\n基本面偏佳"
     )
     assert expected in explain
 
@@ -78,11 +78,11 @@ def test_none_fundamental_values_are_omitted():
     )
 
     assert "EPS：" not in explain
-    assert "本益比(PER)：20.0" in explain
+    assert "本益比(PER)：\n20.0" in explain
     assert "股價淨值比(PBR)：" not in explain
-    assert "殖利率：2.0%" in explain
+    assert "殖利率：\n2.0%" in explain
     assert "月營收YoY：" not in explain
-    assert "AI判定：基本面偏弱" in explain
+    assert "AI判定：\n基本面偏弱" in explain
 
 
 def _institution_explain(institution: dict) -> str:
@@ -107,11 +107,11 @@ def test_all_institutions_buy_and_summary_is_preserved():
         }
     )
 
-    assert "外資：買超 12,345 張" in explain
-    assert "投信：買超 2,100 張" in explain
-    assert "自營商：買超 500 張" in explain
-    assert "三大法人：買超 14,945 張" in explain
-    assert "AI判定：籌碼偏多" in explain
+    assert "外資：\n買超 12,345 張" in explain
+    assert "投信：\n買超 2,100 張" in explain
+    assert "自營商：\n買超 500 張" in explain
+    assert "三大法人：\n合計買超 14,945 張" in explain
+    assert "AI判定：\n籌碼偏多" in explain
 
 
 def test_all_institutions_sell():
@@ -126,11 +126,11 @@ def test_all_institutions_sell():
         }
     )
 
-    assert "外資：賣超 8,200 張" in explain
-    assert "投信：賣超 1,000 張" in explain
-    assert "自營商：賣超 300 張" in explain
-    assert "三大法人：賣超 9,500 張" in explain
-    assert "AI判定：籌碼偏空" in explain
+    assert "外資：\n賣超 8,200 張" in explain
+    assert "投信：\n賣超 1,000 張" in explain
+    assert "自營商：\n賣超 300 張" in explain
+    assert "三大法人：\n合計賣超 9,500 張" in explain
+    assert "AI判定：\n籌碼偏空" in explain
 
 
 def test_missing_institution_values_are_omitted():
@@ -145,10 +145,10 @@ def test_missing_institution_values_are_omitted():
         }
     )
 
-    assert "外資：買超 100 張" in explain
+    assert "外資：\n買超 100 張" in explain
     assert "投信：" not in explain
     assert "自營商：" not in explain
-    assert "三大法人：買超 100 張" in explain
+    assert "三大法人：\n合計買超 100 張" in explain
 
 
 def test_flat_institution_is_displayed():
@@ -160,5 +160,32 @@ def test_flat_institution_is_displayed():
         }
     )
 
-    assert "外資：持平" in explain
-    assert "AI判定：籌碼中性" in explain
+    assert "外資：\n持平" in explain
+    assert "AI判定：\n籌碼中性" in explain
+
+
+def test_technical_layout_uses_label_value_blocks():
+    explain = build_analysis_sections(
+        {
+            "core": {
+                "ma_signal": "站上 MA20",
+                "macd_signal": "死亡交叉",
+                "kd_signal": "死亡交叉",
+                "rsi_signal": "50.4（健康區間）",
+            }
+        }
+    )["explain"]
+
+    assert "技術面：\n\n均線：\n站上 MA20" in explain
+    assert "動能：\nMACD、KD 死亡交叉" in explain
+    assert "RSI：\n50.4（健康區間）" in explain
+
+
+def test_market_sentiment_layout():
+    explain = build_analysis_sections(
+        {"core": {"consensus_score": 60, "trend": "多頭"}}
+    )["explain"]
+
+    assert "市場情緒：\n\n技術指標共識度：\n\n60%" in explain
+    assert "目前偏向：\n\n偏多" in explain
+    assert "新聞：\n\n尚未整合" in explain

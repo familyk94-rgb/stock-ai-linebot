@@ -45,10 +45,10 @@ def build_analysis_sections(stock: dict) -> dict:
     details = "\n".join(
         [
             "詳細原因",
-            f"技術面：\n{_technical_reason(core, technical)}",
+            f"技術面：\n\n{_technical_reason(core, technical)}",
             _fundamental_section(stock.get("financial")),
             _institution_section(stock.get("institution")),
-            f"市場情緒：{_market_sentiment(core, trend)}",
+            f"市場情緒：\n\n{_market_sentiment(core, trend)}",
             f"操作建議：{action}。",
             f"風險提醒：{_risk_warning(core, risk_level)}",
         ]
@@ -108,7 +108,7 @@ def _long_term_advice(stock: dict) -> str:
 
 
 def _technical_reason(core: dict, technical: dict) -> str:
-    return "\n".join(_format_technical_signals(core))
+    return "\n\n".join(_format_technical_signals(core))
 
 
 def _format_technical_signals(core: dict) -> list[str]:
@@ -117,17 +117,17 @@ def _format_technical_signals(core: dict) -> list[str]:
     rsi_signal = _dedupe_indicator_signal(core.get("rsi_signal") or "未判定")
     kd_signal = _dedupe_indicator_signal(core.get("kd_signal") or "未判定")
 
-    lines = [f"均線：{ma_signal}"]
+    lines = [f"均線：\n{ma_signal}"]
     if macd_signal == kd_signal and macd_signal in {"死亡交叉", "黃金交叉"}:
-        lines.append(f"動能：MACD、KD 均呈{macd_signal}")
+        lines.append(f"動能：\nMACD、KD {macd_signal}")
     else:
         lines.extend(
             [
-                f"MACD：{macd_signal}",
-                f"KD：{kd_signal}",
+                f"MACD：\n{macd_signal}",
+                f"KD：\n{kd_signal}",
             ]
         )
-    lines.append(f"RSI：{rsi_signal}")
+    lines.append(f"RSI：\n{rsi_signal}")
     return lines
 
 
@@ -142,9 +142,22 @@ def _dedupe_indicator_signal(signal) -> str:
 
 def _market_sentiment(core: dict, trend: str) -> str:
     consensus = core.get("consensus_score")
-    if consensus is None:
-        return f"目前以技術共識判斷為{trend}，尚無獨立情緒資料。"
-    return f"技術指標共識度為 {consensus}%，目前偏向{trend}；尚無獨立情緒資料。"
+    consensus_text = "尚未評估" if consensus is None else f"{consensus}%"
+    return (
+        f"技術指標共識度：\n\n{consensus_text}\n\n"
+        f"目前偏向：\n\n{_sentiment_bias(trend)}\n\n"
+        "新聞：\n\n尚未整合"
+    )
+
+
+def _sentiment_bias(trend: str) -> str:
+    if "多" in str(trend):
+        return "偏多"
+    if "空" in str(trend):
+        return "偏空"
+    if trend in {None, "", "未判定", "資料不足"}:
+        return "中性"
+    return str(trend)
 
 
 def _risk_warning(core: dict, risk_level: str) -> str:
@@ -171,7 +184,7 @@ def _fundamental_section(financial) -> str:
         ("本益比(PER)", "pe", 1, ""),
         ("股價淨值比(PBR)", "pb", 1, ""),
         ("殖利率", "dividend_yield", 1, "%"),
-        ("月營收YoY", "revenue_growth", 1, "%"),
+        ("月營收 YoY", "revenue_growth", 1, "%"),
     ]
     lines = []
     for label, key, decimals, suffix in fields:
@@ -181,7 +194,9 @@ def _fundamental_section(financial) -> str:
 
     summary = str(financial.get("summary") or "尚未整合")
     lines.append(f"AI判定：{summary}")
-    return "基本面：\n" + "\n".join(lines)
+    return "基本面：\n\n" + "\n\n".join(
+        line.replace("：", "：\n", 1) for line in lines
+    )
 
 
 def _institution_section(institution) -> str:
@@ -198,11 +213,14 @@ def _institution_section(institution) -> str:
     for label, key in fields:
         value = _finite_number(institution.get(key))
         if value is not None:
-            lines.append(f"{label}：{_format_buy_sell(value)}")
+            value_text = _format_buy_sell(value)
+            if label == "三大法人" and value != 0:
+                value_text = f"合計{value_text}"
+            lines.append(f"{label}：\n{value_text}")
 
     summary = str(institution.get("summary") or "尚未整合")
-    lines.append(f"AI判定：{summary}")
-    return "籌碼面：\n" + "\n".join(lines)
+    lines.append(f"AI判定：\n{summary}")
+    return "籌碼面：\n\n" + "\n\n".join(lines)
 
 
 def _format_buy_sell(value: float) -> str:
