@@ -128,6 +128,7 @@ def _fundamental_fallback() -> dict:
         "pb": None,
         "roe": None,
         "revenue_growth": None,
+        "dividend_yield": None,
         "score": 0,
         "summary": "尚未整合",
         "signals": [],

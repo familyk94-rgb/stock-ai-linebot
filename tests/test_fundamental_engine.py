@@ -9,6 +9,7 @@ EXPECTED_KEYS = {
     "pb",
     "roe",
     "revenue_growth",
+    "dividend_yield",
     "score",
     "summary",
     "signals",
@@ -21,6 +22,7 @@ EXPECTED_FALLBACK = {
     "pb": None,
     "roe": None,
     "revenue_growth": None,
+    "dividend_yield": None,
     "score": 0,
     "summary": "尚未整合",
     "signals": [],
@@ -102,6 +104,7 @@ def test_market_service_uses_financial_fallback_when_engine_fails(monkeypatch):
         "pb": None,
         "roe": None,
         "revenue_growth": None,
+        "dividend_yield": None,
         "score": 0,
         "summary": "尚未整合",
         "signals": [],
@@ -165,6 +168,7 @@ def test_engine_calls_service_once_per_analysis(monkeypatch):
             "pb": None,
             "roe": None,
             "revenue_growth": None,
+            "dividend_yield": None,
             "available": False,
         }
 
@@ -174,3 +178,86 @@ def test_engine_calls_service_once_per_analysis(monkeypatch):
 
     assert calls["count"] == 1
     assert result["available"] is False
+
+
+def test_engine_scores_partial_data_without_penalizing_missing_fields(monkeypatch):
+    monkeypatch.setattr(
+        FundamentalService,
+        "get_fundamental",
+        lambda self, stock_id: {
+            "eps": 5.0,
+            "pe": None,
+            "pb": None,
+            "roe": None,
+            "revenue_growth": 12.0,
+            "dividend_yield": None,
+            "available": True,
+        },
+    )
+
+    result = FundamentalEngine().analyze("2330")
+
+    assert result["available"] is True
+    assert result["score"] == 75
+    assert result["summary"] == "基本面偏佳"
+    assert result["roe"] is None
+    assert 0 <= result["score"] <= 100
+
+
+def test_engine_unavailable_service_result_uses_fixed_fallback(monkeypatch):
+    monkeypatch.setattr(
+        FundamentalService,
+        "get_fundamental",
+        lambda self, stock_id: {
+            "eps": None,
+            "pe": None,
+            "pb": None,
+            "roe": None,
+            "revenue_growth": None,
+            "dividend_yield": None,
+            "available": False,
+        },
+    )
+
+    assert FundamentalEngine().analyze("2330") == EXPECTED_FALLBACK
+
+
+def _engine_result_with_fields(monkeypatch, **fields):
+    data = {
+        "eps": None,
+        "pe": None,
+        "pb": None,
+        "roe": None,
+        "revenue_growth": None,
+        "dividend_yield": None,
+        "available": True,
+        **fields,
+    }
+    monkeypatch.setattr(
+        FundamentalService,
+        "get_fundamental",
+        lambda self, stock_id: data,
+    )
+    return FundamentalEngine().analyze("2330")
+
+
+def test_sparse_score_caps_are_applied(monkeypatch):
+    one_field = _engine_result_with_fields(monkeypatch, eps=5)
+    two_fields = _engine_result_with_fields(monkeypatch, eps=5, pe=10)
+    three_fields = _engine_result_with_fields(monkeypatch, eps=5, pe=10, pb=1)
+    four_fields = _engine_result_with_fields(
+        monkeypatch,
+        eps=5,
+        pe=10,
+        pb=1,
+        revenue_growth=20,
+    )
+
+    assert one_field["score"] == 60
+    assert two_fields["score"] == 75
+    assert three_fields["score"] == 85
+    assert four_fields["score"] == 100
+    assert one_field["summary"] == "基本面中性"
+    assert two_fields["summary"] == "基本面偏佳"
+    assert all(result["roe"] is None for result in (one_field, two_fields, three_fields, four_fields))
+    assert all(0 <= result["score"] <= 100 for result in (one_field, two_fields, three_fields, four_fields))
