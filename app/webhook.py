@@ -107,13 +107,15 @@ def handle_text_message(event: MessageEvent):
                 f"ai_result 應該是 dict 或 str，但收到 {type(ai_result).__name__}"
             )
 
+        core_data = market_data.get("core") or {}
+
         flex_data = {
             "stock_code": stock_code,
             "stock_name": market_data.get("stock_name", ""),
-            "score": ai_result.get("score"),
-            "decision": ai_result.get("decision", "觀察"),
-            "risk_level": ai_result.get("risk_level", "未評估"),
-            "shopkeeper_message": ai_result.get(
+            "score": core_data.get("score"),
+            "decision": core_data.get("decision", "觀察"),
+            "risk_level": core_data.get("risk_level", "未評估"),
+            "shopkeeper_message": core_data.get(
                 "shopkeeper_message",
                 "阿柑店長看法：目前先觀察，不急著追高。",
             ),
@@ -121,10 +123,10 @@ def handle_text_message(event: MessageEvent):
             "change": market_data.get("change"),
             "change_percent": market_data.get("change_percent"),
             "volume": market_data.get("volume"),
-            "trend": ai_result.get("trend") or market_data.get("trend"),
-            "ma_signal": ai_result.get("ma_signal") or market_data.get("ma_signal"),
-            "macd_signal": ai_result.get("macd_signal") or market_data.get("macd_signal"),
-            "rsi_signal": ai_result.get("rsi_signal") or market_data.get("rsi_signal"),
+            "trend": core_data.get("trend") or market_data.get("trend"),
+            "ma_signal": core_data.get("ma_signal") or market_data.get("ma_signal"),
+            "macd_signal": core_data.get("macd_signal") or market_data.get("macd_signal"),
+            "rsi_signal": core_data.get("rsi_signal") or market_data.get("rsi_signal"),
             "ai_summary": ai_result.get(
                 "ai_summary",
                 "目前資料不足，建議等待更多訊號。",
