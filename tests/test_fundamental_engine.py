@@ -1,4 +1,5 @@
 from core.market.fundamental_engine import FundamentalEngine
+from services.fundamental_service import FundamentalService
 from services import market_service
 
 
@@ -12,6 +13,18 @@ EXPECTED_KEYS = {
     "summary",
     "signals",
     "available",
+}
+
+EXPECTED_FALLBACK = {
+    "eps": None,
+    "pe": None,
+    "pb": None,
+    "roe": None,
+    "revenue_growth": None,
+    "score": 0,
+    "summary": "尚未整合",
+    "signals": [],
+    "available": False,
 }
 
 
@@ -94,3 +107,70 @@ def test_market_service_uses_financial_fallback_when_engine_fails(monkeypatch):
         "signals": [],
         "available": False,
     }
+
+
+def test_engine_falls_back_when_service_raises(monkeypatch):
+    calls = {"count": 0}
+
+    def raise_error(self, stock_id):
+        calls["count"] += 1
+        raise RuntimeError("simulated failure")
+
+    monkeypatch.setattr(FundamentalService, "get_fundamental", raise_error)
+
+    result = FundamentalEngine().analyze("2330")
+
+    assert calls["count"] == 1
+    assert result == EXPECTED_FALLBACK
+
+
+def test_engine_falls_back_when_service_returns_none(monkeypatch):
+    monkeypatch.setattr(
+        FundamentalService,
+        "get_fundamental",
+        lambda self, stock_id: None,
+    )
+
+    assert FundamentalEngine().analyze("2330") == EXPECTED_FALLBACK
+
+
+def test_engine_falls_back_when_service_returns_non_dict(monkeypatch):
+    monkeypatch.setattr(
+        FundamentalService,
+        "get_fundamental",
+        lambda self, stock_id: "invalid",
+    )
+
+    assert FundamentalEngine().analyze("2330") == EXPECTED_FALLBACK
+
+
+def test_engine_falls_back_when_service_omits_required_key(monkeypatch):
+    monkeypatch.setattr(
+        FundamentalService,
+        "get_fundamental",
+        lambda self, stock_id: {"available": False},
+    )
+
+    assert FundamentalEngine().analyze("2330") == EXPECTED_FALLBACK
+
+
+def test_engine_calls_service_once_per_analysis(monkeypatch):
+    calls = {"count": 0}
+
+    def get_fundamental(self, stock_id):
+        calls["count"] += 1
+        return {
+            "eps": None,
+            "pe": None,
+            "pb": None,
+            "roe": None,
+            "revenue_growth": None,
+            "available": False,
+        }
+
+    monkeypatch.setattr(FundamentalService, "get_fundamental", get_fundamental)
+
+    result = FundamentalEngine().analyze("2330")
+
+    assert calls["count"] == 1
+    assert result["available"] is False

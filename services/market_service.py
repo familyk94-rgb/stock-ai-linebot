@@ -36,7 +36,7 @@ def get_market_info(stock_id: str) -> dict:
     stock = get_stock_info(stock_id)
 
     if not stock:
-        financial = _get_fundamental_analysis(fundamental_engine, {})
+        financial = _get_fundamental_analysis(fundamental_engine, stock_id)
         return {
             "stock_id": stock_id,
             "stock_code": stock_id,
@@ -104,15 +104,15 @@ def get_market_info(stock_id: str) -> dict:
 
     stock_data["financial"] = _get_fundamental_analysis(
         fundamental_engine,
-        stock_data,
+        stock_id,
     )
 
     return stock_data
 
 
-def _get_fundamental_analysis(engine: FundamentalEngine, stock_data: dict) -> dict:
+def _get_fundamental_analysis(engine: FundamentalEngine, stock_id: str) -> dict:
     try:
-        return engine.analyze(stock_data)
+        return engine.analyze(stock_id)
     except Exception as error:
         logger.warning(
             "Fundamental analysis failed; using fallback (error_type=%s)",
