@@ -8,6 +8,10 @@ from core.data_quality import calculate_data_completeness
 from core.market.fundamental_engine import FundamentalEngine
 from core.market.institution_engine import InstitutionEngine
 from core.market.news_engine import NewsEngine
+from core.market.composite_analysis_engine import (
+    CompositeAnalysisEngine,
+    composite_fallback,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -34,6 +38,7 @@ def get_market_info(stock_id: str) -> dict:
     fundamental_engine = FundamentalEngine()
     institution_engine = InstitutionEngine()
     news_engine = NewsEngine()
+    composite_engine = CompositeAnalysisEngine()
 
     stock_name = get_stock_name(stock_id) or ""
 
@@ -43,6 +48,13 @@ def get_market_info(stock_id: str) -> dict:
         financial = _get_fundamental_analysis(fundamental_engine, stock_id)
         institution = _get_institution_analysis(institution_engine, stock_id)
         news = _get_news_analysis(news_engine, stock_id)
+        composite = _get_composite_analysis(
+            composite_engine,
+            {"available": False, "score": None},
+            financial,
+            institution,
+            news,
+        )
         return {
             "stock_id": stock_id,
             "stock_code": stock_id,
@@ -68,6 +80,7 @@ def get_market_info(stock_id: str) -> dict:
             "financial": financial,
             "institution": institution,
             "news": news,
+            "composite": composite,
             "core": {"data_completeness": 0},
         }
 
@@ -119,6 +132,16 @@ def get_market_info(stock_id: str) -> dict:
         stock_id,
     )
     stock_data["news"] = _get_news_analysis(news_engine, stock_id)
+    stock_data["composite"] = _get_composite_analysis(
+        composite_engine,
+        {
+            "available": bool(stock_data.get("technical")),
+            "score": (stock_data.get("core") or {}).get("score"),
+        },
+        stock_data["financial"],
+        stock_data["institution"],
+        stock_data["news"],
+    )
 
     return stock_data
 
@@ -199,3 +222,20 @@ def _news_fallback() -> dict:
         "signals": [],
         "available": False,
     }
+
+
+def _get_composite_analysis(
+    engine: CompositeAnalysisEngine,
+    technical: dict,
+    financial: dict,
+    institution: dict,
+    news: dict,
+) -> dict:
+    try:
+        return engine.analyze(technical, financial, institution, news)
+    except Exception as error:
+        logger.warning(
+            "Composite analysis failed; using fallback (error_type=%s)",
+            type(error).__name__,
+        )
+        return composite_fallback()
