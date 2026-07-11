@@ -48,6 +48,8 @@ def build_analysis_sections(stock: dict) -> dict:
             f"技術面：\n\n{_technical_reason(core, technical)}",
             _fundamental_section(stock.get("financial")),
             _institution_section(stock.get("institution")),
+            _news_section(stock.get("news")),
+            _composite_section(stock.get("composite")),
             f"市場情緒：\n\n{_market_sentiment(core, trend)}",
             f"操作建議：{action}。",
             f"風險提醒：{_risk_warning(core, risk_level)}",
@@ -145,8 +147,7 @@ def _market_sentiment(core: dict, trend: str) -> str:
     consensus_text = "尚未評估" if consensus is None else f"{consensus}%"
     return (
         f"技術指標共識度：\n\n{consensus_text}\n\n"
-        f"目前偏向：\n\n{_sentiment_bias(trend)}\n\n"
-        "新聞：\n\n尚未整合"
+        f"目前偏向：\n\n{_sentiment_bias(trend)}"
     )
 
 
@@ -221,6 +222,92 @@ def _institution_section(institution) -> str:
     summary = str(institution.get("summary") or "尚未整合")
     lines.append(f"AI判定：\n{summary}")
     return "籌碼面：\n\n" + "\n\n".join(lines)
+
+
+def _news_section(news) -> str:
+    if not isinstance(news, dict) or news.get("available") is not True:
+        return "新聞面：資料不足"
+
+    summary = news.get("summary")
+    score = _bounded_number(news.get("score"))
+    if not isinstance(summary, str) or not summary.strip() or score is None:
+        return "新聞面：資料不足"
+
+    lines = [
+        f"新聞面：{summary.strip()}",
+        f"新聞情緒分數：{round(score)} 分",
+    ]
+    lines.extend(_safe_signals(news.get("signals"), deduplicate=False))
+    return "\n\n".join(lines)
+
+
+def _composite_section(composite) -> str:
+    if not isinstance(composite, dict) or composite.get("available") is not True:
+        return "綜合分析：資料不足"
+
+    summary = composite.get("summary")
+    score = _bounded_number(composite.get("score"))
+    coverage = _bounded_number(composite.get("coverage"))
+    if (
+        not isinstance(summary, str)
+        or not summary.strip()
+        or score is None
+        or coverage is None
+    ):
+        return "綜合分析：資料不足"
+
+    lines = [
+        f"綜合分析：{summary.strip()}",
+        f"綜合分數：{round(score)} 分",
+        f"資料覆蓋率：{round(coverage)}%",
+    ]
+    lines.extend(_safe_signals(composite.get("signals"), deduplicate=True))
+    return "\n\n".join(lines)
+
+
+def _safe_signals(signals, *, deduplicate: bool) -> list[str]:
+    if not isinstance(signals, list):
+        return []
+
+    blocked_terms = (
+        "http://",
+        "https://",
+        "www.",
+        "買進",
+        "賣出",
+        "加碼",
+        "停損",
+        "停利",
+        "建議投資",
+        "投資建議",
+        "強烈推薦",
+        "error",
+        "exception",
+        "traceback",
+    )
+    cleaned = []
+    seen = set()
+    for signal in signals:
+        if not isinstance(signal, str):
+            continue
+        value = signal.strip()
+        lowered = value.lower()
+        if not value or any(term in lowered for term in blocked_terms):
+            continue
+        if deduplicate and value in seen:
+            continue
+        seen.add(value)
+        cleaned.append(value)
+    return cleaned
+
+
+def _bounded_number(value):
+    if isinstance(value, bool):
+        return None
+    number = _finite_number(value)
+    if number is None or not isinstance(value, (int, float)):
+        return None
+    return max(0, min(100, number))
 
 
 def _format_buy_sell(value: float) -> str:

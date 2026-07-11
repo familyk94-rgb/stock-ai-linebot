@@ -112,3 +112,55 @@ def test_stock_price_is_used_for_mid_term_advice():
     result = build_analysis_sections(_stock("stock-price"))
 
     assert "中線建議：尚未站回 MA20 前以保守觀察為主。" in result["ai_summary"]
+
+
+def _stock_with_news_and_composite(date: str) -> dict:
+    stock = _stock(date)
+    stock["news"] = {
+        "available": True,
+        "summary": "新聞情緒中性",
+        "score": 50,
+        "signals": ["近 7 日中立新聞 2 則"],
+    }
+    stock["composite"] = {
+        "available": True,
+        "summary": "整體市場訊號中性",
+        "score": 50,
+        "coverage": 75,
+        "signals": ["技術面：50 分"],
+    }
+    return stock
+
+
+def test_openai_failure_fallback_keeps_news_composite_and_single_call(monkeypatch):
+    CACHE.clear()
+    calls = {"count": 0}
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            calls["count"] += 1
+            raise TimeoutError("simulated")
+
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=FakeCompletions())
+    )
+    monkeypatch.setattr(ai_service, "_create_client", lambda: fake_client)
+
+    result = ai_service.ai_stock_analysis(
+        _stock_with_news_and_composite("news-composite-timeout")
+    )
+
+    assert calls["count"] == 1
+    assert "新聞面：新聞情緒中性" in result["explain"]
+    assert "綜合分析：整體市場訊號中性" in result["explain"]
+
+
+def test_invalid_openai_format_returns_complete_news_composite_fallback():
+    fallback = build_analysis_sections(
+        _stock_with_news_and_composite("news-composite-invalid")
+    )
+    result = ai_service._parse_analysis("not-json", fallback)
+
+    assert result == fallback
+    assert "新聞面：新聞情緒中性" in result["explain"]
+    assert "綜合分析：整體市場訊號中性" in result["explain"]

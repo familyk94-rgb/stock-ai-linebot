@@ -1,3 +1,7 @@
+from copy import deepcopy
+
+import pytest
+
 from core.explain_engine import build_analysis_sections
 
 
@@ -188,4 +192,148 @@ def test_market_sentiment_layout():
 
     assert "市場情緒：\n\n技術指標共識度：\n\n60%" in explain
     assert "目前偏向：\n\n偏多" in explain
-    assert "新聞：\n\n尚未整合" in explain
+    assert "新聞尚未整合" not in explain
+
+
+def test_valid_news_displays_summary_score_and_safe_signals_in_order():
+    explain = build_analysis_sections(
+        {
+            "news": {
+                "available": True,
+                "summary": "新聞情緒中性偏多",
+                "score": 62.6,
+                "signals": [
+                    "近 7 日利多新聞 2 則",
+                    "https://example.com/news",
+                    "建議投資並買進",
+                    "RuntimeError: simulated failure",
+                    "最新新聞：營收成長",
+                    "",
+                    None,
+                ],
+            }
+        }
+    )["explain"]
+
+    assert "新聞面：新聞情緒中性偏多" in explain
+    assert "新聞情緒分數：63 分" in explain
+    assert explain.index("近 7 日利多新聞 2 則") < explain.index("最新新聞：營收成長")
+    assert "http" not in explain
+    assert "建議投資" not in explain
+    assert "RuntimeError" not in explain
+    assert "新聞尚未整合" not in explain
+
+
+@pytest.mark.parametrize(
+    "news",
+    [
+        None,
+        {},
+        {"summary": "中性", "score": 50},
+        {"available": False, "summary": "中性", "score": 50},
+        {"available": True, "summary": "中性"},
+        {"available": True, "summary": "中性", "score": None},
+        {"available": True, "summary": "中性", "score": "50"},
+        {"available": True, "summary": "中性", "score": True},
+        {"available": True, "summary": "中性", "score": float("nan")},
+        {"available": True, "summary": "中性", "score": float("inf")},
+    ],
+)
+def test_invalid_news_displays_data_insufficient(news):
+    explain = build_analysis_sections({"news": news})["explain"]
+    assert "新聞面：資料不足" in explain
+
+
+def test_news_score_is_clamped():
+    low = build_analysis_sections(
+        {"news": {"available": True, "summary": "偏空", "score": -1}}
+    )["explain"]
+    high = build_analysis_sections(
+        {"news": {"available": True, "summary": "偏多", "score": 101}}
+    )["explain"]
+    assert "新聞情緒分數：0 分" in low
+    assert "新聞情緒分數：100 分" in high
+
+
+def test_valid_composite_displays_summary_score_coverage_and_unique_signals():
+    explain = build_analysis_sections(
+        {
+            "composite": {
+                "available": True,
+                "summary": "整體市場訊號中性偏多",
+                "score": 64.6,
+                "coverage": 74.6,
+                "signals": [
+                    "技術面：80 分",
+                    "技術面：80 分",
+                    "基本面：60 分",
+                    "www.example.com",
+                    "強烈推薦加碼",
+                    123,
+                ],
+            }
+        }
+    )["explain"]
+
+    assert "綜合分析：整體市場訊號中性偏多" in explain
+    assert "綜合分數：65 分" in explain
+    assert "資料覆蓋率：75%" in explain
+    assert explain.count("技術面：80 分") == 1
+    assert explain.index("技術面：80 分") < explain.index("基本面：60 分")
+    assert "www." not in explain
+    assert "強烈推薦" not in explain
+
+
+@pytest.mark.parametrize(
+    "composite",
+    [
+        None,
+        {},
+        {"summary": "中性", "score": 50, "coverage": 50},
+        {"available": False, "summary": "中性", "score": 50, "coverage": 50},
+        {"available": True, "summary": "中性", "score": "50", "coverage": 50},
+        {"available": True, "summary": "中性", "score": 50, "coverage": True},
+        {"available": True, "summary": "中性", "score": float("nan"), "coverage": 50},
+        {"available": True, "summary": "中性", "score": 50, "coverage": float("inf")},
+    ],
+)
+def test_invalid_composite_displays_data_insufficient(composite):
+    explain = build_analysis_sections({"composite": composite})["explain"]
+    assert "綜合分析：資料不足" in explain
+
+
+def test_composite_score_and_coverage_are_clamped():
+    explain = build_analysis_sections(
+        {
+            "composite": {
+                "available": True,
+                "summary": "測試",
+                "score": 200,
+                "coverage": -10,
+            }
+        }
+    )["explain"]
+    assert "綜合分數：100 分" in explain
+    assert "資料覆蓋率：0%" in explain
+
+
+def test_news_precedes_composite_and_inputs_are_not_modified():
+    stock = {
+        "news": {
+            "available": True,
+            "summary": "新聞中性",
+            "score": 50,
+            "signals": ["新聞訊號"],
+        },
+        "composite": {
+            "available": True,
+            "summary": "綜合中性",
+            "score": 50,
+            "coverage": 100,
+            "signals": ["綜合訊號"],
+        },
+    }
+    original = deepcopy(stock)
+    explain = build_analysis_sections(stock)["explain"]
+    assert explain.index("新聞面：") < explain.index("綜合分析：")
+    assert stock == original
