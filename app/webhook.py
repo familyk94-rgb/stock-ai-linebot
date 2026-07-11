@@ -49,7 +49,7 @@ def handle_text_message(event: MessageEvent):
     user_text = event.message.text.strip()
 
     if not user_text.isdigit():
-        reply_text(event.reply_token, "請輸入股票代號，例如：2330")
+        safe_reply_text(event.reply_token, "請輸入股票代號，例如：2330")
         return
 
     stock_code = user_text
@@ -72,7 +72,7 @@ def handle_text_message(event: MessageEvent):
         )
 
         if market_data.get("price") is None:
-            reply_text(
+            safe_reply_text(
                 event.reply_token,
                 "目前暫時查不到這檔股票的市場資料，可能是資料來源逾時或代號有誤，請稍後再試。",
             )
@@ -82,7 +82,7 @@ def handle_text_message(event: MessageEvent):
             ai_result = ai_stock_analysis(market_data)
         except Exception:
             logger.exception("AI analysis failed", extra={"stock_code": stock_code})
-            reply_text(
+            safe_reply_text(
                 event.reply_token,
                 "市場資料已取得，但 AI 分析服務暫時無法完成，請稍後再試。",
             )
@@ -136,7 +136,7 @@ def handle_text_message(event: MessageEvent):
     except Exception:
         logger.exception("LINE message handling failed", extra={"stock_code": stock_code})
 
-        reply_text(
+        safe_reply_text(
             event.reply_token,
             "系統暫時無法完成查詢，請稍後再試。",
         )
@@ -158,3 +158,10 @@ def reply_text(reply_token: str, text: str):
         reply_token,
         TextMessage(text=text),
     )
+
+
+def safe_reply_text(reply_token: str, text: str):
+    try:
+        reply_text(reply_token, text)
+    except Exception:
+        logger.exception("LINE fallback text reply failed")
