@@ -100,6 +100,9 @@ def handle_text_message(event: MessageEvent):
             )
 
         core_data = market_data.get("core") or {}
+        composite_data = market_data.get("composite")
+        if not isinstance(composite_data, dict):
+            composite_data = {}
 
         flex_data = {
             "stock_code": stock_code,
@@ -119,6 +122,10 @@ def handle_text_message(event: MessageEvent):
             "ma_signal": core_data.get("ma_signal") or market_data.get("ma_signal"),
             "macd_signal": core_data.get("macd_signal") or market_data.get("macd_signal"),
             "rsi_signal": core_data.get("rsi_signal") or market_data.get("rsi_signal"),
+            "composite_available": composite_data.get("available", False),
+            "composite_score": composite_data.get("score"),
+            "composite_summary": composite_data.get("summary", ""),
+            "composite_coverage": composite_data.get("coverage"),
             "ai_summary": ai_result.get(
                 "ai_summary",
                 "目前資料不足，建議等待更多訊號。",

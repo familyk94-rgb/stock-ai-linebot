@@ -5,6 +5,7 @@ from app.flex.dashboard_card import build_dashboard_card
 from app.flex.shopkeeper_card import build_shopkeeper_card
 from app.flex.market_card import build_market_card
 from app.flex.technical_card import build_technical_card
+from app.flex.composite_card import build_composite_card
 from app.flex.analysis_card import build_analysis_card
 from app.flex.explain_card import build_explain_card
 
@@ -46,6 +47,12 @@ def build_stock_dashboard_bubble(data: dict | None = None) -> dict:
                     ma_signal=data.get("ma_signal"),
                     macd_signal=data.get("macd_signal"),
                     rsi_signal=data.get("rsi_signal"),
+                ),
+                build_composite_card(
+                    available=data.get("composite_available", False),
+                    score=data.get("composite_score"),
+                    summary=data.get("composite_summary"),
+                    coverage=data.get("composite_coverage"),
                 ),
                 build_analysis_card(
                     summary=data.get("ai_summary"),

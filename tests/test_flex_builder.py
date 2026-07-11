@@ -26,6 +26,10 @@ def _full_data(**overrides):
         "ma_signal": "站上 MA20",
         "macd_signal": "黃金交叉",
         "rsi_signal": "55.5（健康區間）",
+        "composite_available": True,
+        "composite_score": 72,
+        "composite_summary": "整體市場訊號中性偏多",
+        "composite_coverage": 100,
         "ai_summary": "摘要第一行\n摘要第二行 😀",
         "explain": "詳細原因\n技術面：整理\n綜合分析：中性",
     }
@@ -74,18 +78,19 @@ def test_full_data_builds_flex_message_without_mutating_input():
     assert data == original
 
 
-def test_bubble_card_order_and_no_independent_market_analysis_cards():
+def test_bubble_card_order_includes_composite_before_ai_summary():
     bubble = build_stock_dashboard_bubble(_full_data())
     body = bubble["body"]["contents"]
-    assert len(body) == 6
+    assert len(body) == 7
     assert body[0]["contents"][0]["text"] == "AI 儀表板"
     assert body[1]["contents"][0]["text"] == "阿柑店長"
     assert body[2]["contents"][0]["text"] == "市場資料"
     assert body[3]["contents"][0]["text"] == "技術分析"
-    assert body[4]["contents"][0]["text"] == "AI 分析"
-    assert body[5]["contents"][0]["text"] == "分析原因"
+    assert body[4]["contents"][0]["text"] == "綜合分析"
+    assert body[5]["contents"][0]["text"] == "AI 分析"
+    assert body[6]["contents"][0]["text"] == "分析原因"
     headings = [card["contents"][0]["text"] for card in body]
-    assert all(name not in headings for name in ("綜合分析", "基本面", "籌碼面", "新聞面"))
+    assert all(name not in headings for name in ("基本面", "籌碼面", "新聞面"))
     assert bubble["footer"]["contents"][0]["text"]
 
 
@@ -93,11 +98,14 @@ def test_all_mapped_values_are_present_in_expected_cards():
     data = _full_data()
     bubble = build_stock_dashboard_bubble(data)
     body = bubble["body"]["contents"]
-    dashboard, _, market, technical, summary, explain = body
+    dashboard, _, market, technical, composite, summary, explain = body
     assert {"82.0", "偏多", "中等風險"}.issubset(set(_text_values(dashboard)))
     assert {"1000", "10", "1.01%", "123456"}.issubset(set(_text_values(market)))
     assert {"多頭", "站上 MA20", "黃金交叉", "55.5（健康區間）"}.issubset(
         set(_text_values(technical))
+    )
+    assert {"72 分", "整體市場訊號中性偏多", "100%"}.issubset(
+        set(_text_values(composite))
     )
     assert data["ai_summary"] in _text_values(summary)
     assert data["explain"] in _text_values(explain)
@@ -105,8 +113,8 @@ def test_all_mapped_values_are_present_in_expected_cards():
 
 def test_summary_and_explain_are_wrapped():
     bubble = build_stock_dashboard_bubble(_full_data())
-    summary_text = bubble["body"]["contents"][4]["contents"][1]
-    explain_text = bubble["body"]["contents"][5]["contents"][1]
+    summary_text = bubble["body"]["contents"][5]["contents"][1]
+    explain_text = bubble["body"]["contents"][6]["contents"][1]
     assert summary_text["wrap"] is True
     assert explain_text["wrap"] is True
     assert "maxLines" not in summary_text
@@ -117,7 +125,7 @@ def test_three_thousand_unicode_explain_is_preserved_and_sdk_parses():
     explain = "測" * 3000
     data = _full_data(explain=explain)
     bubble = build_stock_dashboard_bubble(data)
-    assert bubble["body"]["contents"][5]["contents"][1]["text"] == explain
+    assert bubble["body"]["contents"][6]["contents"][1]["text"] == explain
     assert FlexContainer.from_dict(bubble) is not None
 
 
@@ -162,3 +170,71 @@ def test_builder_is_deterministic_and_records_json_sizes(capsys):
     assert normal_size > 0
     assert long_size > normal_size
     assert "services.flex_service" not in build_stock_dashboard_flex.__module__
+
+
+def _composite_texts(**overrides):
+    bubble = build_stock_dashboard_bubble(_full_data(**overrides))
+    return _text_values(bubble["body"]["contents"][4])
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("composite_score", None),
+        ("composite_score", True),
+        ("composite_score", "72"),
+        ("composite_score", float("nan")),
+        ("composite_score", float("inf")),
+        ("composite_coverage", None),
+        ("composite_coverage", False),
+        ("composite_coverage", "100"),
+        ("composite_coverage", float("nan")),
+        ("composite_coverage", float("inf")),
+        ("composite_summary", "   "),
+        ("composite_summary", 123),
+    ],
+)
+def test_invalid_composite_values_show_only_unavailable_details(field, value):
+    texts = _composite_texts(**{field: value})
+    assert texts == ["綜合分析", "資料不足"]
+    assert "50 分" not in texts
+    assert "0%" not in texts
+
+
+@pytest.mark.parametrize(
+    ("score", "coverage", "expected_score", "expected_coverage"),
+    [
+        (0, 0, "0 分", "0%"),
+        (100, 100, "100 分", "100%"),
+        (-1, -2, "0 分", "0%"),
+        (101, 120, "100 分", "100%"),
+    ],
+)
+def test_composite_score_and_coverage_are_clamped(score, coverage, expected_score, expected_coverage):
+    texts = _composite_texts(composite_score=score, composite_coverage=coverage)
+    assert expected_score in texts
+    assert expected_coverage in texts
+
+
+def test_composite_unicode_summary_and_private_details_are_safe():
+    data = _full_data(composite_summary="多空交錯 🚀 測試")
+    data["contributions"] = {"technical": {"score": 99}}
+    data["signals"] = ["不應顯示的訊號"]
+    texts = _text_values(build_stock_dashboard_bubble(data)["body"]["contents"][4])
+    assert "多空交錯 🚀 測試" in texts
+    serialized = " ".join(texts)
+    assert "不應顯示的訊號" not in serialized
+    assert "technical" not in serialized
+    assert "financial" not in serialized
+    assert "institution" not in serialized
+    assert "news" not in serialized
+
+
+def test_composite_unavailable_ignores_fallback_details():
+    texts = _composite_texts(
+        composite_available=False,
+        composite_score=50,
+        composite_summary="綜合分析資料不足",
+        composite_coverage=0,
+    )
+    assert texts == ["綜合分析", "資料不足"]

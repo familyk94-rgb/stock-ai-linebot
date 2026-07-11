@@ -38,7 +38,14 @@ def _market_data(**overrides):
         "financial": {"available": True},
         "institution": {"available": True},
         "news": {"available": True},
-        "composite": {"available": True},
+        "composite": {
+            "available": True,
+            "score": 72,
+            "summary": "整體市場訊號中性偏多 🚀",
+            "coverage": 100,
+            "contributions": {"technical": {"score": 80}},
+            "signals": ["不應傳入 Flex"],
+        },
         "core": {
             "score": 80,
             "decision": "偏多",
@@ -93,12 +100,63 @@ def test_normal_flow_maps_flex_data_and_replies_once(monkeypatch):
         "stock_code", "stock_name", "score", "decision", "risk_level",
         "shopkeeper_message", "price", "change", "change_percent", "volume",
         "trend", "ma_signal", "macd_signal", "rsi_signal", "ai_summary", "explain",
+        "composite_available", "composite_score", "composite_summary", "composite_coverage",
     }
     assert set(calls["flex_data"]) == expected_keys
     assert not {"financial", "institution", "news", "composite"} & set(calls["flex_data"])
+    assert not {"contributions", "signals"} & set(calls["flex_data"])
     assert calls["flex_data"]["trend"] == "核心趨勢"
     assert calls["flex_data"]["ai_summary"] == "摘要"
     assert calls["flex_data"]["explain"] == "原因"
+    assert calls["flex_data"]["composite_available"] is True
+    assert calls["flex_data"]["composite_score"] == 72
+    assert calls["flex_data"]["composite_summary"] == "整體市場訊號中性偏多 🚀"
+    assert calls["flex_data"]["composite_coverage"] == 100
+
+
+@pytest.mark.parametrize("composite", [None, "invalid", [], 1])
+def test_invalid_or_missing_composite_maps_unavailable(monkeypatch, composite):
+    calls = _setup_normal(monkeypatch)
+    market = _market_data(composite=composite)
+    monkeypatch.setattr(webhook, "get_market_info", lambda code: market)
+    webhook.handle_text_message(_event())
+    assert calls["flex_data"]["composite_available"] is False
+    assert calls["flex_data"]["composite_score"] is None
+    assert calls["flex_data"]["composite_summary"] == ""
+    assert calls["flex_data"]["composite_coverage"] is None
+
+
+def test_missing_composite_maps_unavailable_without_mutating_market_data(monkeypatch):
+    calls = _setup_normal(monkeypatch)
+    market = _market_data()
+    del market["composite"]
+    original = dict(market)
+    monkeypatch.setattr(webhook, "get_market_info", lambda code: market)
+    webhook.handle_text_message(_event())
+    assert calls["flex_data"]["composite_available"] is False
+    assert market == original
+
+
+@pytest.mark.parametrize(
+    "composite",
+    [
+        {"available": False, "score": 50, "summary": "資料不足", "coverage": 0},
+        {"available": True, "score": 0, "summary": "中性", "coverage": 0},
+        {"available": True, "score": 100, "summary": "偏多 🚀", "coverage": 100},
+    ],
+)
+def test_composite_mapping_preserves_explicit_values(monkeypatch, composite):
+    calls = _setup_normal(monkeypatch)
+    market = _market_data(composite=composite)
+    monkeypatch.setattr(webhook, "get_market_info", lambda code: market)
+    webhook.handle_text_message(_event())
+    assert calls["flex_data"]["composite_available"] is composite["available"]
+    assert calls["flex_data"]["composite_score"] == composite["score"]
+    assert calls["flex_data"]["composite_summary"] == composite["summary"]
+    assert calls["flex_data"]["composite_coverage"] == composite["coverage"]
+    assert calls["market"] == 0
+    assert calls["ai"] == calls["builder"] == 1
+    assert len(calls["reply"]) == 1
 
 
 def test_ai_dict_missing_text_fields_uses_existing_fallbacks(monkeypatch):
