@@ -111,6 +111,36 @@ def test_all_mapped_values_are_present_in_expected_cards():
     assert data["explain"] in _text_values(explain)
 
 
+def test_dashboard_uses_ai_technical_score_naming_contract():
+    bubble = build_stock_dashboard_bubble(
+        _full_data(score=82.6, decision="偏多", risk_level="中等風險")
+    )
+    dashboard = bubble["body"]["contents"][0]
+    dashboard_texts = _text_values(dashboard)
+
+    assert "AI 技術分" in dashboard_texts
+    assert "總分" not in dashboard_texts
+    assert "82.6" in dashboard_texts
+    assert "偏多" in dashboard_texts
+    assert "中等風險" in dashboard_texts
+
+
+@pytest.mark.parametrize(("score", "expected"), [(0, "0.0"), (100, "100.0")])
+def test_dashboard_score_boundaries_keep_existing_one_decimal_format(score, expected):
+    dashboard = build_stock_dashboard_bubble(_full_data(score=score))["body"]["contents"][0]
+    assert expected in _text_values(dashboard)
+
+
+def test_composite_score_label_remains_distinct_from_dashboard_score_label():
+    body = build_stock_dashboard_bubble(_full_data())["body"]["contents"]
+    dashboard_texts = _text_values(body[0])
+    composite_texts = _text_values(body[4])
+
+    assert "AI 技術分" in dashboard_texts
+    assert "綜合評分" in composite_texts
+    assert "AI 技術分" not in composite_texts
+
+
 def test_summary_and_explain_are_wrapped():
     bubble = build_stock_dashboard_bubble(_full_data())
     summary_text = bubble["body"]["contents"][5]["contents"][1]

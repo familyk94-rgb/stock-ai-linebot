@@ -24,7 +24,7 @@ def build_dashboard_card(
                 "contents": [
                     {
                         "type": "text",
-                        "text": "總分",
+                        "text": "AI 技術分",
                         "size": "sm",
                         "color": "#6B7280",
                         "flex": 1,
