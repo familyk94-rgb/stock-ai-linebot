@@ -12,6 +12,29 @@ from services.cache_service import get_cache, set_cache
 
 logger = logging.getLogger(__name__)
 OPENAI_TIMEOUT_SECONDS = 15
+MAX_EXPLAIN_LENGTH = 3000
+SUMMARY_LABELS = (
+    "趨勢總結",
+    "短線建議",
+    "中線建議",
+    "長線建議",
+    "AI信心度",
+)
+EXPLAIN_LABELS = (
+    "技術面",
+    "基本面",
+    "籌碼面",
+    "新聞面",
+    "綜合分析",
+    "市場情緒",
+    "操作建議",
+    "風險提醒",
+)
+FORBIDDEN_EXPLAIN_TERMS = (
+    "http://", "https://", "www.", "明確買進", "明確賣出",
+    "強烈買進", "強烈賣出", "保證獲利", "必定上漲", "必定下跌",
+    "無風險", "投資建議", "建議投資",
+)
 
 
 def ai_stock_analysis(stock):
@@ -19,9 +42,12 @@ def ai_stock_analysis(stock):
     cached = get_cache(cache_key)
 
     if isinstance(cached, dict):
-        return cached
+        fallback = _limit_analysis_explain(build_analysis_sections(stock))
+        if not _is_valid_cached_analysis(cached):
+            return fallback
+        return _limit_analysis_explain(cached, fallback=fallback)
 
-    fallback = build_analysis_sections(stock)
+    fallback = _limit_analysis_explain(build_analysis_sections(stock))
     client = _create_client()
 
     if client is None:
@@ -49,6 +75,7 @@ def ai_stock_analysis(stock):
         )
         analysis = fallback
 
+    analysis = _limit_analysis_explain(analysis, fallback=fallback)
     set_cache(cache_key, analysis)
     return analysis
 
@@ -78,10 +105,14 @@ def _build_prompt(stock: dict, fallback: dict) -> str:
 
 {fallback['explain']}
 
+詳細原因必須依序完整保留以下八個段落，不得省略或調換：
+技術面、基本面、籌碼面、新聞面、綜合分析、市場情緒、操作建議、風險提醒。
+新聞面必須排在綜合分析之前。不得輸出 URL、直接買賣建議、保證獲利或無風險等文字。
+
 只回傳合法 JSON，不要 Markdown，不要額外說明：
 {{
   "ai_summary": "摘要\\n趨勢總結：...\\n短線建議：...\\n中線建議：...\\n長線建議：...\\nAI信心度：...",
-  "explain": "詳細原因\\n技術面：...\\n基本面：...\\n籌碼面：...\\n市場情緒：...\\n操作建議：...\\n風險提醒：..."
+  "explain": "詳細原因\\n技術面：...\\n基本面：...\\n籌碼面：...\\n新聞面：...\\n綜合分析：...\\n市場情緒：...\\n操作建議：...\\n風險提醒：..."
 }}
 
 摘要只寫結論與不同時間尺度建議；詳細原因只寫依據、操作與風險，兩區不要重複句子。
@@ -110,6 +141,8 @@ def _parse_analysis(
         return fallback
     if not _has_required_labels(summary, explain):
         return fallback
+    if _contains_forbidden_explain_text(explain):
+        return fallback
     if require_missing_fundamental and _label_value(explain, "基本面") != "尚未整合":
         return fallback
     if require_missing_chip and _label_value(explain, "籌碼面") != "尚未整合":
@@ -124,10 +157,146 @@ def _parse_analysis(
 
 
 def _has_required_labels(summary: str, explain: str) -> bool:
-    summary_labels = ("趨勢總結：", "短線建議：", "中線建議：", "長線建議：", "AI信心度：")
-    explain_labels = ("技術面：", "基本面：", "籌碼面：", "市場情緒：", "操作建議：", "風險提醒：")
-    return all(_label_value(summary, label.rstrip("：")) for label in summary_labels) and all(
-        _label_value(explain, label.rstrip("：")) for label in explain_labels
+    return all(
+        _label_value(summary, label) for label in SUMMARY_LABELS
+    ) and _has_ordered_labels(summary, SUMMARY_LABELS) and _has_ordered_explain_labels(explain)
+
+
+def _has_ordered_explain_labels(explain: str) -> bool:
+    return _has_ordered_labels(explain, EXPLAIN_LABELS)
+
+
+def _has_ordered_labels(text: str, labels: tuple[str, ...]) -> bool:
+    positions = []
+    for label in labels:
+        match = re.search(rf"(?:^|\n){re.escape(label)}：", text)
+        if not match:
+            return False
+        positions.append(match.start())
+    return positions == sorted(positions) and len(set(positions)) == len(positions)
+
+
+def _contains_forbidden_explain_text(explain: str) -> bool:
+    lowered = explain.casefold()
+    return any(term.casefold() in lowered for term in FORBIDDEN_EXPLAIN_TERMS)
+
+
+def _is_valid_cached_analysis(cached: dict) -> bool:
+    summary = cached.get("ai_summary")
+    explain = cached.get("explain")
+    if not isinstance(summary, str) or not summary.strip():
+        return False
+    if not isinstance(explain, str) or not explain.strip():
+        return False
+    if not _has_required_labels(summary, explain):
+        return False
+    return not (
+        _contains_forbidden_explain_text(summary)
+        or _contains_forbidden_explain_text(explain)
+    )
+
+
+def _limit_analysis_explain(analysis: dict, fallback: dict | None = None) -> dict:
+    if not isinstance(analysis, dict):
+        return analysis
+    result = dict(analysis)
+    explain = result.get("explain")
+    if isinstance(explain, str) and len(explain) > MAX_EXPLAIN_LENGTH:
+        limited = _limit_explain_preserving_sections(explain, MAX_EXPLAIN_LENGTH)
+        if limited is None and isinstance(fallback, dict):
+            fallback_explain = fallback.get("explain")
+            if isinstance(fallback_explain, str):
+                limited = _limit_explain_preserving_sections(
+                    fallback_explain,
+                    MAX_EXPLAIN_LENGTH,
+                )
+        result["explain"] = limited or _minimal_explain()
+    return result
+
+
+def _limit_explain_preserving_sections(
+    explain: str,
+    max_length: int = MAX_EXPLAIN_LENGTH,
+) -> str | None:
+    if len(explain) <= max_length:
+        return explain
+
+    parsed = _parse_explain_sections(explain)
+    if parsed is None:
+        return None
+    prefix, sections = parsed
+
+    if len(prefix) > 100:
+        prefix = f"{prefix[:99]}…"
+    prefix_text = f"{prefix}\n" if prefix else ""
+    separators_length = len(EXPLAIN_LABELS) - 1
+    fixed_length = len(prefix_text) + separators_length + sum(
+        len(label) + 1 for label in EXPLAIN_LABELS
+    )
+    content_budget = max(0, max_length - fixed_length)
+    allocations = _fair_allocations(
+        [len(content) for _, content in sections],
+        content_budget,
+    )
+
+    rendered = []
+    for (label, content), allocation in zip(sections, allocations):
+        if len(content) <= allocation:
+            value = content
+        elif allocation <= 1:
+            value = "…" if allocation == 1 else ""
+        else:
+            value = f"{content[: allocation - 1]}…"
+        rendered.append(f"{label}：{value}")
+
+    result = prefix_text + "\n".join(rendered)
+    return result if len(result) <= max_length else None
+
+
+def _parse_explain_sections(explain: str) -> tuple[str, list[tuple[str, str]]] | None:
+    matches = []
+    for label in EXPLAIN_LABELS:
+        match = re.search(rf"(?m)^{re.escape(label)}：", explain)
+        if not match:
+            return None
+        matches.append((label, match))
+    if [match.start() for _, match in matches] != sorted(
+        match.start() for _, match in matches
+    ):
+        return None
+
+    prefix = explain[: matches[0][1].start()].strip()
+    sections = []
+    for index, (label, match) in enumerate(matches):
+        end = matches[index + 1][1].start() if index + 1 < len(matches) else len(explain)
+        sections.append((label, explain[match.end():end].strip()))
+    return prefix, sections
+
+
+def _fair_allocations(lengths: list[int], budget: int) -> list[int]:
+    allocations = [0] * len(lengths)
+    active = {index for index, length in enumerate(lengths) if length > 0}
+    remaining = budget
+    while active and remaining > 0:
+        share = max(1, remaining // len(active))
+        progressed = False
+        for index in tuple(sorted(active)):
+            grant = min(share, lengths[index] - allocations[index], remaining)
+            allocations[index] += grant
+            remaining -= grant
+            progressed = progressed or grant > 0
+            if allocations[index] >= lengths[index]:
+                active.remove(index)
+            if remaining == 0:
+                break
+        if not progressed:
+            break
+    return allocations
+
+
+def _minimal_explain() -> str:
+    return "詳細原因\n" + "\n".join(
+        f"{label}：資料不足" for label in EXPLAIN_LABELS
     )
 
 

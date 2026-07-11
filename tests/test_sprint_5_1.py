@@ -1,6 +1,9 @@
 import importlib
 import json
+from copy import deepcopy
 from types import SimpleNamespace
+
+import pytest
 
 import services.ai_service as ai_service
 from core.explain_engine import build_analysis_sections
@@ -164,3 +167,370 @@ def test_invalid_openai_format_returns_complete_news_composite_fallback():
     assert result == fallback
     assert "新聞面：新聞情緒中性" in result["explain"]
     assert "綜合分析：整體市場訊號中性" in result["explain"]
+
+
+def _valid_model_result() -> dict:
+    return {
+        "ai_summary": (
+            "摘要\n趨勢總結：盤勢整理\n短線建議：留意波動\n"
+            "中線建議：追蹤趨勢\n長線建議：觀察基本面\nAI信心度：75%"
+        ),
+        "explain": (
+            "詳細原因\n"
+            "技術面：均線整理\n"
+            "基本面：尚未整合\n"
+            "籌碼面：尚未整合\n"
+            "新聞面：情緒中性\n"
+            "綜合分析：訊號中性\n"
+            "市場情緒：觀望\n"
+            "操作建議：控制部位\n"
+            "風險提醒：留意波動"
+        ),
+    }
+
+
+def test_complete_ordered_openai_contract_is_accepted():
+    fallback = build_analysis_sections(_stock_with_news_and_composite("valid-contract"))
+    model = _valid_model_result()
+    result = ai_service._parse_analysis(
+        json.dumps(model, ensure_ascii=False),
+        fallback,
+    )
+    assert result == model
+
+
+def test_openai_success_uses_complete_contract_and_calls_once(monkeypatch):
+    CACHE.clear()
+    calls = {"count": 0}
+    model = _valid_model_result()
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            calls["count"] += 1
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(model, ensure_ascii=False)))]
+            )
+
+    monkeypatch.setattr(
+        ai_service,
+        "_create_client",
+        lambda: SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())),
+    )
+    result = ai_service.ai_stock_analysis(
+        _stock_with_news_and_composite("valid-openai")
+    )
+    assert calls["count"] == 1
+    assert result == model
+
+
+def test_each_missing_explain_section_uses_fallback():
+    fallback = build_analysis_sections(_stock_with_news_and_composite("missing-section"))
+    for label in ai_service.EXPLAIN_LABELS:
+        model = _valid_model_result()
+        model["explain"] = "\n".join(
+            line for line in model["explain"].splitlines()
+            if not line.startswith(f"{label}：")
+        )
+        result = ai_service._parse_analysis(
+            json.dumps(model, ensure_ascii=False), fallback
+        )
+        assert result == fallback, label
+
+
+def test_news_after_composite_uses_fallback():
+    fallback = build_analysis_sections(_stock_with_news_and_composite("wrong-order"))
+    model = _valid_model_result()
+    lines = model["explain"].splitlines()
+    news_index = next(i for i, line in enumerate(lines) if line.startswith("新聞面："))
+    composite_index = next(i for i, line in enumerate(lines) if line.startswith("綜合分析："))
+    lines[news_index], lines[composite_index] = lines[composite_index], lines[news_index]
+    model["explain"] = "\n".join(lines)
+    assert ai_service._parse_analysis(
+        json.dumps(model, ensure_ascii=False), fallback
+    ) == fallback
+
+
+def test_non_string_and_blank_explain_use_fallback():
+    fallback = build_analysis_sections(_stock_with_news_and_composite("invalid-explain"))
+    for explain in (None, 123, "", "   "):
+        model = _valid_model_result()
+        model["explain"] = explain
+        assert ai_service._parse_analysis(
+            json.dumps(model, ensure_ascii=False), fallback
+        ) == fallback
+
+
+@pytest.mark.parametrize(
+    "forbidden",
+    [
+        "http://example.com",
+        "HTTPS://example.com",
+        "www.example.com",
+        "明確買進",
+        "明確賣出",
+        "強烈買進",
+        "強烈賣出",
+        "保證獲利",
+        "必定上漲",
+        "必定下跌",
+        "無風險",
+        "投資建議",
+        "建議投資",
+    ],
+)
+def test_url_and_forbidden_advice_use_fallback(forbidden):
+    fallback = build_analysis_sections(_stock_with_news_and_composite("forbidden"))
+    model = _valid_model_result()
+    model["explain"] += f"\n{forbidden}"
+    assert ai_service._parse_analysis(
+        json.dumps(model, ensure_ascii=False), fallback
+    ) == fallback
+
+
+def test_openai_api_exception_uses_complete_fallback(monkeypatch):
+    CACHE.clear()
+    calls = {"count": 0}
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            calls["count"] += 1
+            raise RuntimeError("simulated")
+
+    monkeypatch.setattr(
+        ai_service,
+        "_create_client",
+        lambda: SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())),
+    )
+    result = ai_service.ai_stock_analysis(
+        _stock_with_news_and_composite("api-exception")
+    )
+    assert calls["count"] == 1
+    assert "新聞面：" in result["explain"]
+    assert "綜合分析：" in result["explain"]
+
+
+def test_explain_length_limit_over_and_exactly_three_thousand():
+    model = _valid_model_result()
+    model["explain"] = _long_valid_explain()
+    over = ai_service._limit_analysis_explain(
+        model
+    )
+    exact = ai_service._limit_analysis_explain(
+        {
+            "ai_summary": _valid_model_result()["ai_summary"],
+            "explain": _valid_explain_of_length(3000),
+        }
+    )
+    assert len(over["explain"]) == 3000
+    assert over["explain"].endswith("…")
+    _assert_eight_sections_in_order(over["explain"])
+    assert exact["explain"] == _valid_explain_of_length(3000)
+    _assert_eight_sections_in_order(exact["explain"])
+
+
+def test_fallback_length_limit_and_market_data_immutability(monkeypatch):
+    CACHE.clear()
+    stock = _stock_with_news_and_composite("long-fallback")
+    stock["news"]["signals"] = ["安全新聞訊號" * 600]
+    original = deepcopy(stock)
+    monkeypatch.setattr(ai_service, "_create_client", lambda: None)
+    result = ai_service.ai_stock_analysis(stock)
+    assert len(result["explain"]) == 3000
+    assert "…" in result["explain"]
+    _assert_eight_sections_in_order(result["explain"])
+    assert stock == original
+
+
+def _long_valid_explain() -> str:
+    return "詳細原因\n" + "\n".join(
+        f"{label}：{label}內容" * 100 for label in ai_service.EXPLAIN_LABELS
+    )
+
+
+def _valid_explain_of_length(length: int) -> str:
+    explain = _valid_model_result()["explain"]
+    padding = length - len(explain)
+    if padding < 0:
+        raise ValueError("target length is too short")
+    return explain.replace("技術面：", f"技術面：{'x' * padding}", 1)
+
+
+def _assert_eight_sections_in_order(explain: str):
+    positions = [explain.index(f"{label}：") for label in ai_service.EXPLAIN_LABELS]
+    assert positions == sorted(positions)
+
+
+def test_long_valid_openai_explain_preserves_sections_and_calls_once(monkeypatch):
+    CACHE.clear()
+    calls = {"count": 0}
+    model = _valid_model_result()
+    model["explain"] = _long_valid_explain()
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            calls["count"] += 1
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(model, ensure_ascii=False)))]
+            )
+
+    monkeypatch.setattr(
+        ai_service,
+        "_create_client",
+        lambda: SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())),
+    )
+    stock = _stock_with_news_and_composite("long-valid-openai")
+    stock["financial"] = {"available": True}
+    stock["institution"] = {"available": True}
+    result = ai_service.ai_stock_analysis(stock)
+    assert calls["count"] == 1
+    assert len(result["explain"]) <= 3000
+    assert "…" in result["explain"]
+    _assert_eight_sections_in_order(result["explain"])
+
+
+def test_below_limit_explain_is_unchanged():
+    model = _valid_model_result()
+    assert ai_service._limit_analysis_explain(model) == model
+
+
+def test_prompt_requires_eight_sections_and_keeps_summary_contract():
+    fallback = build_analysis_sections(_stock_with_news_and_composite("prompt"))
+    prompt = ai_service._build_prompt(
+        _stock_with_news_and_composite("prompt"), fallback
+    )
+    for label in ai_service.EXPLAIN_LABELS:
+        assert label in prompt
+    assert prompt.index("新聞面") < prompt.index("綜合分析")
+    for label in ("趨勢總結：", "短線建議：", "中線建議：", "長線建議：", "AI信心度："):
+        assert label in prompt
+
+
+def _set_cached(stock: dict, cached: dict):
+    ai_service.set_cache(
+        f"ai_dashboard_v2_{stock['stock_id']}_{stock['date']}",
+        cached,
+    )
+
+
+def _forbid_openai(monkeypatch):
+    monkeypatch.setattr(
+        ai_service,
+        "_create_client",
+        lambda: (_ for _ in ()).throw(AssertionError("OpenAI must not be called")),
+    )
+
+
+def test_legacy_six_section_cache_uses_eight_section_fallback_without_openai(monkeypatch):
+    CACHE.clear()
+    stock = _stock_with_news_and_composite("legacy-cache")
+    cached = _valid_model_result()
+    cached["explain"] = "\n".join(
+        line for line in cached["explain"].splitlines()
+        if not line.startswith(("新聞面：", "綜合分析："))
+    )
+    _set_cached(stock, cached)
+    _forbid_openai(monkeypatch)
+
+    result = ai_service.ai_stock_analysis(stock)
+
+    _assert_eight_sections_in_order(result["explain"])
+    assert "新聞面：新聞情緒中性" in result["explain"]
+    assert "綜合分析：整體市場訊號中性" in result["explain"]
+
+
+@pytest.mark.parametrize("missing_label", ai_service.EXPLAIN_LABELS)
+def test_cache_missing_each_explain_section_uses_fallback_without_openai(
+    monkeypatch, missing_label
+):
+    CACHE.clear()
+    stock = _stock_with_news_and_composite(f"cache-missing-{missing_label}")
+    cached = _valid_model_result()
+    cached["explain"] = "\n".join(
+        line for line in cached["explain"].splitlines()
+        if not line.startswith(f"{missing_label}：")
+    )
+    _set_cached(stock, cached)
+    _forbid_openai(monkeypatch)
+    result = ai_service.ai_stock_analysis(stock)
+    _assert_eight_sections_in_order(result["explain"])
+    assert result != cached
+
+
+def test_cache_wrong_section_order_uses_fallback_without_openai(monkeypatch):
+    CACHE.clear()
+    stock = _stock_with_news_and_composite("cache-wrong-order")
+    cached = _valid_model_result()
+    lines = cached["explain"].splitlines()
+    news = next(i for i, line in enumerate(lines) if line.startswith("新聞面："))
+    composite = next(i for i, line in enumerate(lines) if line.startswith("綜合分析："))
+    lines[news], lines[composite] = lines[composite], lines[news]
+    cached["explain"] = "\n".join(lines)
+    _set_cached(stock, cached)
+    _forbid_openai(monkeypatch)
+    result = ai_service.ai_stock_analysis(stock)
+    _assert_eight_sections_in_order(result["explain"])
+    assert result != cached
+
+
+@pytest.mark.parametrize("forbidden", ai_service.FORBIDDEN_EXPLAIN_TERMS)
+@pytest.mark.parametrize("field", ["ai_summary", "explain"])
+def test_cache_forbidden_text_uses_fallback_without_openai(
+    monkeypatch, forbidden, field
+):
+    CACHE.clear()
+    stock = _stock_with_news_and_composite(f"cache-forbidden-{field}-{forbidden}")
+    cached = _valid_model_result()
+    cached[field] += f"\n{forbidden}"
+    _set_cached(stock, cached)
+    _forbid_openai(monkeypatch)
+    result = ai_service.ai_stock_analysis(stock)
+    assert forbidden not in result[field]
+    _assert_eight_sections_in_order(result["explain"])
+
+
+@pytest.mark.parametrize("missing_label", ai_service.SUMMARY_LABELS)
+def test_cache_missing_each_summary_section_uses_fallback_without_openai(
+    monkeypatch, missing_label
+):
+    CACHE.clear()
+    stock = _stock_with_news_and_composite(f"cache-summary-{missing_label}")
+    cached = _valid_model_result()
+    cached["ai_summary"] = "\n".join(
+        line for line in cached["ai_summary"].splitlines()
+        if not line.startswith(f"{missing_label}：")
+    )
+    _set_cached(stock, cached)
+    _forbid_openai(monkeypatch)
+    result = ai_service.ai_stock_analysis(stock)
+    assert result != cached
+    for label in ai_service.SUMMARY_LABELS:
+        assert f"{label}：" in result["ai_summary"]
+
+
+def test_valid_cache_is_returned_unchanged_without_openai_or_input_mutation(monkeypatch):
+    CACHE.clear()
+    stock = _stock_with_news_and_composite("valid-cache")
+    original_stock = deepcopy(stock)
+    cached = _valid_model_result()
+    original_cached = deepcopy(cached)
+    _set_cached(stock, cached)
+    _forbid_openai(monkeypatch)
+    result = ai_service.ai_stock_analysis(stock)
+    assert result == cached
+    assert cached == original_cached
+    assert stock == original_stock
+
+
+def test_long_valid_cache_preserves_sections_without_openai(monkeypatch):
+    CACHE.clear()
+    stock = _stock_with_news_and_composite("long-valid-cache")
+    cached = _valid_model_result()
+    cached["explain"] = _valid_explain_of_length(4000)
+    original_cached = deepcopy(cached)
+    _set_cached(stock, cached)
+    _forbid_openai(monkeypatch)
+    result = ai_service.ai_stock_analysis(stock)
+    assert len(result["explain"]) <= 3000
+    assert "…" in result["explain"]
+    _assert_eight_sections_in_order(result["explain"])
+    assert cached == original_cached
