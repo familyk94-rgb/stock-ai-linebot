@@ -179,6 +179,11 @@ def test_market_service_institution_failure_preserves_other_data(monkeypatch):
         "analyze",
         lambda self, stock_id: (_ for _ in ()).throw(RuntimeError("simulated")),
     )
+    monkeypatch.setattr(
+        market_service.NewsEngine,
+        "analyze",
+        lambda self, stock_id: {"available": False},
+    )
 
     result = market_service.get_market_info("2330")
 

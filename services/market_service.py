@@ -7,6 +7,7 @@ from core.ganzai_ai import GanzaiAI
 from core.data_quality import calculate_data_completeness
 from core.market.fundamental_engine import FundamentalEngine
 from core.market.institution_engine import InstitutionEngine
+from core.market.news_engine import NewsEngine
 
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ def get_market_info(stock_id: str) -> dict:
     stock_id = str(stock_id).strip()
     fundamental_engine = FundamentalEngine()
     institution_engine = InstitutionEngine()
+    news_engine = NewsEngine()
 
     stock_name = get_stock_name(stock_id) or ""
 
@@ -40,6 +42,7 @@ def get_market_info(stock_id: str) -> dict:
     if not stock:
         financial = _get_fundamental_analysis(fundamental_engine, stock_id)
         institution = _get_institution_analysis(institution_engine, stock_id)
+        news = _get_news_analysis(news_engine, stock_id)
         return {
             "stock_id": stock_id,
             "stock_code": stock_id,
@@ -64,6 +67,7 @@ def get_market_info(stock_id: str) -> dict:
             "technical": {},
             "financial": financial,
             "institution": institution,
+            "news": news,
             "core": {"data_completeness": 0},
         }
 
@@ -114,6 +118,7 @@ def get_market_info(stock_id: str) -> dict:
         institution_engine,
         stock_id,
     )
+    stock_data["news"] = _get_news_analysis(news_engine, stock_id)
 
     return stock_data
 
@@ -164,6 +169,31 @@ def _institution_fallback() -> dict:
         "foreign_streak": None,
         "investment_streak": None,
         "dealer_streak": None,
+        "score": 0,
+        "summary": "尚未整合",
+        "signals": [],
+        "available": False,
+    }
+
+
+def _get_news_analysis(engine: NewsEngine, stock_id: str) -> dict:
+    try:
+        return engine.analyze(stock_id)
+    except Exception as error:
+        logger.warning(
+            "News analysis failed; using fallback (error_type=%s)",
+            type(error).__name__,
+        )
+        return _news_fallback()
+
+
+def _news_fallback() -> dict:
+    return {
+        "items": [],
+        "count": 0,
+        "positive_count": 0,
+        "negative_count": 0,
+        "neutral_count": 0,
         "score": 0,
         "summary": "尚未整合",
         "signals": [],
