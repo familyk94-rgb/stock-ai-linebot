@@ -1,5 +1,6 @@
 import logging
 
+from services.asset_service import AssetService, asset_fallback
 from services.stock_service import get_stock_info
 from services.technical_service import get_technical_indicators
 from services.stock_name_service import get_stock_name
@@ -42,8 +43,10 @@ def get_market_info(stock_id: str) -> dict:
     news_engine = NewsEngine()
     composite_engine = CompositeAnalysisEngine()
     data_quality_engine = DataQualityEngine()
+    asset_service = AssetService()
 
     stock_name = get_stock_name(stock_id) or ""
+    asset = _get_asset(asset_service, stock_id)
 
     stock = get_stock_info(stock_id)
 
@@ -84,6 +87,7 @@ def get_market_info(stock_id: str) -> dict:
             "institution": institution,
             "news": news,
             "composite": composite,
+            "asset": asset,
             "core": {"data_completeness": 0},
         }
         market_data["data_quality"] = _get_data_quality(data_quality_engine, market_data)
@@ -117,6 +121,7 @@ def get_market_info(stock_id: str) -> dict:
         "rsi_signal": technical.get("rsi_signal", "未判定"),
 
         "technical": technical,
+        "asset": asset,
     }
 
     try:
@@ -271,3 +276,14 @@ def _get_data_quality(engine: DataQualityEngine, market_data: dict) -> dict:
             type(error).__name__,
         )
         return data_quality_fallback()
+
+
+def _get_asset(service: AssetService, stock_id: str) -> dict:
+    try:
+        return service.get_asset(stock_id)
+    except Exception as error:
+        logger.warning(
+            "Asset metadata failed; using fallback (error_type=%s)",
+            type(error).__name__,
+        )
+        return asset_fallback()

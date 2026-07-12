@@ -1,0 +1,22 @@
+{
+  "updated_at": null,
+  "sources": {
+    "twse_company": {
+      "updated_at": null,
+      "status": "unknown"
+    },
+    "tpex_company": {
+      "updated_at": null,
+      "status": "unknown"
+    },
+    "twse_etf": {
+      "updated_at": null,
+      "status": "unknown"
+    },
+    "tpex_etf": {
+      "updated_at": null,
+      "status": "unknown"
+    }
+  },
+  "assets": {}
+}

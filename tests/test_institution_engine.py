@@ -156,6 +156,11 @@ def test_service_is_called_once(monkeypatch):
 
 
 def test_market_service_institution_failure_preserves_other_data(monkeypatch):
+    monkeypatch.setattr(
+        market_service.AssetService,
+        "get_asset",
+        lambda self, stock_id: {"type": "unknown", "source": None, "confidence": "low"},
+    )
     monkeypatch.setattr(market_service, "get_stock_name", lambda stock_id: "台積電")
     monkeypatch.setattr(
         market_service,

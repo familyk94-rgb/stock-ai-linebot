@@ -152,6 +152,11 @@ def test_weights_and_contributions_are_rounded_to_two_decimals():
 
 def _mock_market_dependencies(monkeypatch):
     calls = {"financial": 0, "institution": 0, "news": 0}
+    monkeypatch.setattr(
+        market_service.AssetService,
+        "get_asset",
+        lambda self, stock_id: {"type": "unknown", "source": None, "confidence": "low"},
+    )
     monkeypatch.setattr(market_service, "get_stock_name", lambda stock_id: "台積電")
     monkeypatch.setattr(
         market_service,

@@ -56,6 +56,11 @@ def test_fundamental_engine_returns_defaults_for_none():
 
 
 def test_market_service_uses_financial_fallback_when_engine_fails(monkeypatch):
+    monkeypatch.setattr(
+        market_service.AssetService,
+        "get_asset",
+        lambda self, stock_id: {"type": "unknown", "source": None, "confidence": "low"},
+    )
     calls = {"count": 0}
 
     def raise_fundamental_error(self, stock_data):

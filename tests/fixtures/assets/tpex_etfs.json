@@ -1,0 +1,8 @@
+{
+  "status": "success",
+  "data": [
+    {"stockNo": "006201", "stockName": "元大富櫃50", "listingDate": "20110127"},
+    {"stockNo": "00679B", "stockName": "元大美債20年", "listingDate": "20170117"},
+    {"stockNo": "00687B", "stockName": "國泰20年美債", "listingDate": "20170413"}
+  ]
+}
