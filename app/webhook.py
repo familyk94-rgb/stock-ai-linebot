@@ -108,6 +108,7 @@ def handle_text_message(event: MessageEvent):
             "stock_code": stock_code,
             "stock_name": market_data.get("stock_name", ""),
             "score": core_data.get("score"),
+            "confidence": core_data.get("confidence"),
             "decision": core_data.get("decision", "觀察"),
             "risk_level": core_data.get("risk_level", "未評估"),
             "shopkeeper_message": core_data.get(

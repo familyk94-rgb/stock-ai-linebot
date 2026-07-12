@@ -48,6 +48,7 @@ def _market_data(**overrides):
         },
         "core": {
             "score": 80,
+            "confidence": 85,
             "decision": "偏多",
             "risk_level": "中等風險",
             "shopkeeper_message": "店長訊息",
@@ -97,7 +98,7 @@ def test_normal_flow_maps_flex_data_and_replies_once(monkeypatch):
     assert calls["market"] == calls["ai"] == calls["builder"] == 1
     assert calls["reply"] == [("reply-token", "flex-message")]
     expected_keys = {
-        "stock_code", "stock_name", "score", "decision", "risk_level",
+        "stock_code", "stock_name", "score", "confidence", "decision", "risk_level",
         "shopkeeper_message", "price", "change", "change_percent", "volume",
         "trend", "ma_signal", "macd_signal", "rsi_signal", "ai_summary", "explain",
         "composite_available", "composite_score", "composite_summary", "composite_coverage",
@@ -106,6 +107,7 @@ def test_normal_flow_maps_flex_data_and_replies_once(monkeypatch):
     assert not {"financial", "institution", "news", "composite"} & set(calls["flex_data"])
     assert not {"contributions", "signals"} & set(calls["flex_data"])
     assert calls["flex_data"]["trend"] == "核心趨勢"
+    assert calls["flex_data"]["confidence"] == 85
     assert calls["flex_data"]["ai_summary"] == "摘要"
     assert calls["flex_data"]["explain"] == "原因"
     assert calls["flex_data"]["composite_available"] is True
@@ -164,6 +166,21 @@ def test_ai_dict_missing_text_fields_uses_existing_fallbacks(monkeypatch):
     webhook.handle_text_message(_event())
     assert calls["flex_data"]["ai_summary"] == "目前資料不足，建議等待更多訊號。"
     assert calls["flex_data"]["explain"] == "尚未產生完整解釋。"
+
+
+def test_confidence_is_not_parsed_from_ai_summary(monkeypatch):
+    calls = _setup_normal(
+        monkeypatch,
+        ai_result={"ai_summary": "AI 信心度：99%", "explain": "原因"},
+    )
+    market = _market_data()
+    market["core"] = dict(market["core"])
+    market["core"].pop("confidence")
+    monkeypatch.setattr(webhook, "get_market_info", lambda code: market)
+
+    webhook.handle_text_message(_event())
+
+    assert calls["flex_data"]["confidence"] is None
 
 
 def test_string_ai_result_becomes_summary_with_reason_fallback(monkeypatch):

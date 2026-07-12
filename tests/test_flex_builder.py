@@ -15,6 +15,7 @@ def _full_data(**overrides):
         "stock_code": "2330",
         "stock_name": "台積電 🚀",
         "score": 82,
+        "confidence": 85,
         "decision": "偏多",
         "risk_level": "中等風險",
         "shopkeeper_message": "店長說：\"留意波動\" \\ 測試",
@@ -99,7 +100,7 @@ def test_all_mapped_values_are_present_in_expected_cards():
     bubble = build_stock_dashboard_bubble(data)
     body = bubble["body"]["contents"]
     dashboard, _, market, technical, composite, summary, explain = body
-    assert {"82.0", "偏多", "中等風險"}.issubset(set(_text_values(dashboard)))
+    assert {"82.0", "85%", "偏多", "中等風險"}.issubset(set(_text_values(dashboard)))
     assert {"1000", "10", "1.01%", "123456"}.issubset(set(_text_values(market)))
     assert {"多頭", "站上 MA20", "黃金交叉", "55.5（健康區間）"}.issubset(
         set(_text_values(technical))
@@ -125,6 +126,31 @@ def test_dashboard_uses_ai_technical_score_naming_contract():
     assert "中等風險" in dashboard_texts
 
 
+@pytest.mark.parametrize(
+    ("confidence", "expected"),
+    [
+        (85, "85%"),
+        (85.6, "86%"),
+        ("72", "72%"),
+        (-1, "0%"),
+        (101, "100%"),
+        (None, "—"),
+        (float("nan"), "—"),
+        (float("inf"), "—"),
+    ],
+)
+def test_dashboard_confidence_format_contract(confidence, expected):
+    dashboard = build_stock_dashboard_bubble(
+        _full_data(confidence=confidence)
+    )["body"]["contents"][0]
+    texts = _text_values(dashboard)
+    assert "AI 信心度" in texts
+    assert expected in texts
+    assert "AI 技術分" in texts
+    assert "偏多" in texts
+    assert "中等風險" in texts
+
+
 @pytest.mark.parametrize(("score", "expected"), [(0, "0.0"), (100, "100.0")])
 def test_dashboard_score_boundaries_keep_existing_one_decimal_format(score, expected):
     dashboard = build_stock_dashboard_bubble(_full_data(score=score))["body"]["contents"][0]
@@ -138,6 +164,8 @@ def test_composite_score_label_remains_distinct_from_dashboard_score_label():
 
     assert "AI 技術分" in dashboard_texts
     assert "綜合評分" in composite_texts
+    assert "分析面向覆蓋率" in composite_texts
+    assert "資料覆蓋率" not in composite_texts
     assert "AI 技術分" not in composite_texts
 
 

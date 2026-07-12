@@ -40,7 +40,7 @@ def build_composite_card(
             [
                 _row("綜合評分", f"{round(_clamp(score))} 分"),
                 _row("摘要", summary.strip(), wrap=True),
-                _row("資料覆蓋率", f"{round(_clamp(coverage))}%"),
+                _row("分析面向覆蓋率", f"{round(_clamp(coverage))}%"),
             ]
         )
 
