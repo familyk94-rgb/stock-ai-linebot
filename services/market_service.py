@@ -12,6 +12,7 @@ from core.market.composite_analysis_engine import (
     CompositeAnalysisEngine,
     composite_fallback,
 )
+from core.shopkeeper_engine import get_composite_aware_advice
 
 
 logger = logging.getLogger(__name__)
@@ -142,6 +143,7 @@ def get_market_info(stock_id: str) -> dict:
         stock_data["institution"],
         stock_data["news"],
     )
+    _update_shopkeeper_message(stock_data)
 
     return stock_data
 
@@ -239,3 +241,17 @@ def _get_composite_analysis(
             type(error).__name__,
         )
         return composite_fallback()
+
+
+def _update_shopkeeper_message(market_data: dict) -> None:
+    core = market_data.get("core")
+    if not isinstance(core, dict):
+        return
+    current_message = core.get("shopkeeper_message")
+    updated_message = get_composite_aware_advice(
+        current_message,
+        core.get("decision"),
+        market_data.get("composite"),
+    )
+    if isinstance(current_message, str) and updated_message != current_message:
+        core["shopkeeper_message"] = updated_message

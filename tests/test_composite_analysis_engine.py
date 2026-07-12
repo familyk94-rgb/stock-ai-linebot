@@ -223,3 +223,33 @@ def test_market_service_composite_exception_uses_fallback(monkeypatch):
     )
     result = market_service.get_market_info("2330")
     assert result["composite"] == composite_fallback()
+
+
+def test_market_service_updates_shopkeeper_once_after_composite(monkeypatch):
+    _mock_market_dependencies(monkeypatch)
+    monkeypatch.setattr(
+        market_service.GanzaiAI,
+        "run",
+        lambda self: {
+            "score": 80,
+            "decision": "偏多",
+            "shopkeeper_message": "原訊息",
+        },
+    )
+    calls = []
+
+    def update(current_message, decision, composite):
+        calls.append((current_message, decision, deepcopy(composite)))
+        return "更新後訊息"
+
+    monkeypatch.setattr(market_service, "get_composite_aware_advice", update)
+    result = market_service.get_market_info("2330")
+
+    assert len(calls) == 1
+    assert calls[0][0] == "原訊息"
+    assert calls[0][1] == "偏多"
+    assert calls[0][2] == result["composite"]
+    assert result["core"]["shopkeeper_message"] == "更新後訊息"
+    assert result["core"]["score"] == 80
+    assert result["core"]["decision"] == "偏多"
+    assert result["composite"]["score"] == 55

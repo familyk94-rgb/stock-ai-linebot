@@ -1,3 +1,6 @@
+import math
+
+
 def get_shopkeeper_advice(ai_score, risk_score):
     """
     阿柑店長建議 V1.0
@@ -63,3 +66,56 @@ def get_shopkeeper_advice(ai_score, risk_score):
         advice["tip"] = "分批、控風險，比一次猜方向更重要。"
 
     return advice
+
+
+def get_composite_aware_advice(current_message, decision, composite) -> str:
+    """依既有決策與綜合分析微調店長文案，不改變任何分析結果。"""
+    original = current_message if isinstance(current_message, str) else ""
+    try:
+        if not isinstance(composite, dict) or composite.get("available") is not True:
+            return original
+        if not {"score", "summary", "coverage"}.issubset(composite):
+            return original
+
+        score = composite.get("score")
+        coverage = composite.get("coverage")
+        if not _finite_number(score) or not _finite_number(coverage):
+            return original
+
+        if decision in {"強烈買進", "買進", "偏多"}:
+            if score >= 60:
+                message = "目前技術與整體訊號偏多，可分批觀察，仍需留意風險。"
+            elif score < 40:
+                message = "技術面偏多，但整體訊號仍偏弱，先觀察，不宜追高。"
+            else:
+                message = _append_sentence(original, "整體訊號偏中性，等待方向明確。")
+        elif decision in {"偏空", "減碼", "賣出"}:
+            if score >= 60:
+                message = "基本面或籌碼面可能較佳，但技術面仍弱，等待止跌訊號。"
+            elif score < 40:
+                message = "技術與整體訊號皆偏弱，先保守觀望。"
+            else:
+                message = _append_sentence(original, "整體訊號偏中性，等待方向明確。")
+        else:
+            return original
+
+        if coverage < 50:
+            message = _append_sentence(message, "目前分析面向不足，判斷需保守。")
+        return message
+    except Exception:
+        return original
+
+
+def _finite_number(value) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
+    )
+
+
+def _append_sentence(message: str, sentence: str) -> str:
+    if not message:
+        return sentence
+    separator = "" if message.endswith(("。", "！", "？")) else "。"
+    return f"{message}{separator}{sentence}"
