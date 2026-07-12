@@ -31,6 +31,8 @@ def _full_data(**overrides):
         "composite_score": 72,
         "composite_summary": "整體市場訊號中性偏多",
         "composite_coverage": 100,
+        "data_quality_status": "正常",
+        "data_quality_is_stale": False,
         "ai_summary": "摘要第一行\n摘要第二行 😀",
         "explain": "詳細原因\n技術面：整理\n綜合分析：中性",
     }
@@ -296,3 +298,31 @@ def test_composite_unavailable_ignores_fallback_details():
         composite_coverage=0,
     )
     assert texts == ["綜合分析", "資料不足"]
+
+
+@pytest.mark.parametrize(
+    ("status", "stale", "expected"),
+    [
+        ("正常", False, []),
+        ("部分資料", False, ["資料狀態：部分資料"]),
+        ("資料不足", False, ["資料狀態：資料不足"]),
+        ("部分資料", True, ["資料狀態：部分資料", "資料可能已過期"]),
+    ],
+)
+def test_data_quality_notice_contract(status, stale, expected):
+    data = _full_data(
+        data_quality_status=status,
+        data_quality_is_stale=stale,
+    )
+    original = deepcopy(data)
+    bubble = build_stock_dashboard_bubble(data)
+    composite_texts = _text_values(bubble["body"]["contents"][4])
+    for text in expected:
+        assert text in composite_texts
+    if not expected:
+        assert not any(text.startswith("資料狀態：") for text in composite_texts)
+        assert "資料可能已過期" not in composite_texts
+    assert len(bubble["body"]["contents"]) == 7
+    assert FlexContainer.from_dict(bubble) is not None
+    assert isinstance(json.dumps(bubble, ensure_ascii=False), str)
+    assert data == original

@@ -253,3 +253,77 @@ def test_market_service_updates_shopkeeper_once_after_composite(monkeypatch):
     assert result["core"]["score"] == 80
     assert result["core"]["decision"] == "偏多"
     assert result["composite"]["score"] == 55
+
+
+def test_market_service_calculates_data_quality_once_after_modules(monkeypatch):
+    _mock_market_dependencies(monkeypatch)
+    calls = []
+
+    def analyze(self, market_data):
+        calls.append(deepcopy(market_data))
+        return {"status": "正常", "marker": "quality"}
+
+    monkeypatch.setattr(market_service.DataQualityEngine, "analyze", analyze)
+    result = market_service.get_market_info("2330")
+
+    assert len(calls) == 1
+    assert all(key in calls[0] for key in ("financial", "institution", "news", "composite"))
+    assert result["data_quality"] == {"status": "正常", "marker": "quality"}
+    assert result["core"]["score"] == 80
+    assert result["core"]["confidence"] == 70
+
+
+def test_market_service_no_price_calculates_data_quality_once(monkeypatch):
+    _mock_market_dependencies(monkeypatch)
+    monkeypatch.setattr(market_service, "get_stock_info", lambda stock_id: None)
+    calls = []
+
+    def analyze(self, market_data):
+        calls.append(deepcopy(market_data))
+        return {"status": "資料不足", "marker": "no-price"}
+
+    monkeypatch.setattr(market_service.DataQualityEngine, "analyze", analyze)
+    result = market_service.get_market_info("2330")
+
+    assert len(calls) == 1
+    assert calls[0]["price"] is None
+    assert all(key in calls[0] for key in ("financial", "institution", "news", "composite"))
+    assert result["data_quality"] == {"status": "資料不足", "marker": "no-price"}
+    assert result["price"] is None
+
+
+@pytest.mark.parametrize("no_price", [False, True])
+def test_market_service_data_quality_exception_uses_fixed_fallback(monkeypatch, no_price):
+    _mock_market_dependencies(monkeypatch)
+    if no_price:
+        monkeypatch.setattr(market_service, "get_stock_info", lambda stock_id: None)
+
+    def fail(self, market_data):
+        raise RuntimeError("simulated")
+
+    monkeypatch.setattr(market_service.DataQualityEngine, "analyze", fail)
+    result = market_service.get_market_info("2330")
+
+    assert result["data_quality"] == {
+        "status": "資料不足",
+        "as_of_date": None,
+        "fetched_at": None,
+        "is_stale": False,
+        "available_sources": [],
+        "missing_sources": ["price", "technical", "fundamental", "institution", "news"],
+        "source_dates": {
+            "price": None,
+            "technical": None,
+            "fundamental": None,
+            "institution": None,
+            "news": None,
+        },
+        "data_completeness": 0,
+    }
+    assert result["financial"]["marker"] == "financial"
+    assert result["institution"]["marker"] == "institution"
+    assert result["news"]["marker"] == "news"
+    assert "composite" in result
+    if not no_price:
+        assert result["price"] == 1000
+        assert result["technical"] == {"trend": "多頭"}

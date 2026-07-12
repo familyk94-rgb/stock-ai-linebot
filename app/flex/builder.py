@@ -54,6 +54,8 @@ def build_stock_dashboard_bubble(data: dict | None = None) -> dict:
                     score=data.get("composite_score"),
                     summary=data.get("composite_summary"),
                     coverage=data.get("composite_coverage"),
+                    data_quality_status=data.get("data_quality_status"),
+                    data_quality_is_stale=data.get("data_quality_is_stale", False),
                 ),
                 build_analysis_card(
                     summary=data.get("ai_summary"),

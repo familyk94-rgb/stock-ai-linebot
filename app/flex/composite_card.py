@@ -6,6 +6,8 @@ def build_composite_card(
     score=None,
     summary=None,
     coverage=None,
+    data_quality_status=None,
+    data_quality_is_stale=False,
 ) -> dict:
     valid = (
         available is True
@@ -43,6 +45,11 @@ def build_composite_card(
                 _row("分析面向覆蓋率", f"{round(_clamp(coverage))}%"),
             ]
         )
+
+    if data_quality_status in {"部分資料", "資料不足"}:
+        contents.append(_notice(f"資料狀態：{data_quality_status}"))
+    if data_quality_is_stale is True:
+        contents.append(_notice("資料可能已過期"))
 
     return {
         "type": "box",
@@ -90,4 +97,14 @@ def _row(label: str, value: str, wrap: bool = False) -> dict:
             },
             value_text,
         ],
+    }
+
+
+def _notice(text: str) -> dict:
+    return {
+        "type": "text",
+        "text": text,
+        "size": "xs",
+        "color": "#B45309",
+        "wrap": True,
     }

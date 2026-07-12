@@ -46,6 +46,7 @@ def _market_data(**overrides):
             "contributions": {"technical": {"score": 80}},
             "signals": ["不應傳入 Flex"],
         },
+        "data_quality": {"status": "部分資料", "is_stale": True},
         "core": {
             "score": 80,
             "confidence": 85,
@@ -102,6 +103,7 @@ def test_normal_flow_maps_flex_data_and_replies_once(monkeypatch):
         "shopkeeper_message", "price", "change", "change_percent", "volume",
         "trend", "ma_signal", "macd_signal", "rsi_signal", "ai_summary", "explain",
         "composite_available", "composite_score", "composite_summary", "composite_coverage",
+        "data_quality_status", "data_quality_is_stale",
     }
     assert set(calls["flex_data"]) == expected_keys
     assert not {"financial", "institution", "news", "composite"} & set(calls["flex_data"])
@@ -114,6 +116,8 @@ def test_normal_flow_maps_flex_data_and_replies_once(monkeypatch):
     assert calls["flex_data"]["composite_score"] == 72
     assert calls["flex_data"]["composite_summary"] == "整體市場訊號中性偏多 🚀"
     assert calls["flex_data"]["composite_coverage"] == 100
+    assert calls["flex_data"]["data_quality_status"] == "部分資料"
+    assert calls["flex_data"]["data_quality_is_stale"] is True
 
 
 @pytest.mark.parametrize("composite", [None, "invalid", [], 1])

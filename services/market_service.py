@@ -5,6 +5,7 @@ from services.technical_service import get_technical_indicators
 from services.stock_name_service import get_stock_name
 from core.ganzai_ai import GanzaiAI
 from core.data_quality import calculate_data_completeness
+from core.data_quality_engine import DataQualityEngine, data_quality_fallback
 from core.market.fundamental_engine import FundamentalEngine
 from core.market.institution_engine import InstitutionEngine
 from core.market.news_engine import NewsEngine
@@ -40,6 +41,7 @@ def get_market_info(stock_id: str) -> dict:
     institution_engine = InstitutionEngine()
     news_engine = NewsEngine()
     composite_engine = CompositeAnalysisEngine()
+    data_quality_engine = DataQualityEngine()
 
     stock_name = get_stock_name(stock_id) or ""
 
@@ -56,7 +58,7 @@ def get_market_info(stock_id: str) -> dict:
             institution,
             news,
         )
-        return {
+        market_data = {
             "stock_id": stock_id,
             "stock_code": stock_id,
             "stock_name": stock_name,
@@ -84,6 +86,8 @@ def get_market_info(stock_id: str) -> dict:
             "composite": composite,
             "core": {"data_completeness": 0},
         }
+        market_data["data_quality"] = _get_data_quality(data_quality_engine, market_data)
+        return market_data
 
     technical = get_technical_indicators(stock_id) or {}
 
@@ -144,6 +148,7 @@ def get_market_info(stock_id: str) -> dict:
         stock_data["news"],
     )
     _update_shopkeeper_message(stock_data)
+    stock_data["data_quality"] = _get_data_quality(data_quality_engine, stock_data)
 
     return stock_data
 
@@ -255,3 +260,14 @@ def _update_shopkeeper_message(market_data: dict) -> None:
     )
     if isinstance(current_message, str) and updated_message != current_message:
         core["shopkeeper_message"] = updated_message
+
+
+def _get_data_quality(engine: DataQualityEngine, market_data: dict) -> dict:
+    try:
+        return engine.analyze(market_data)
+    except Exception as error:
+        logger.warning(
+            "Data quality analysis failed; using fallback (error_type=%s)",
+            type(error).__name__,
+        )
+        return data_quality_fallback()

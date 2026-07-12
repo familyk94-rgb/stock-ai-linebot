@@ -103,6 +103,9 @@ def handle_text_message(event: MessageEvent):
         composite_data = market_data.get("composite")
         if not isinstance(composite_data, dict):
             composite_data = {}
+        data_quality = market_data.get("data_quality")
+        if not isinstance(data_quality, dict):
+            data_quality = {}
 
         flex_data = {
             "stock_code": stock_code,
@@ -127,6 +130,8 @@ def handle_text_message(event: MessageEvent):
             "composite_score": composite_data.get("score"),
             "composite_summary": composite_data.get("summary", ""),
             "composite_coverage": composite_data.get("coverage"),
+            "data_quality_status": data_quality.get("status"),
+            "data_quality_is_stale": data_quality.get("is_stale", False),
             "ai_summary": ai_result.get(
                 "ai_summary",
                 "目前資料不足，建議等待更多訊號。",
