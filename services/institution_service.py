@@ -2,10 +2,12 @@ import logging
 import math
 import os
 from datetime import date, datetime, timedelta
+from time import perf_counter
 
 import requests
 
 from app.config import FINMIND_API_TOKEN
+from core.observability import elapsed_ms, log_event
 
 
 logger = logging.getLogger(__name__)
@@ -57,6 +59,7 @@ class InstitutionService:
         }
 
     def _fetch(self, stock_id: str) -> list[dict]:
+        started_at = perf_counter()
         end_date = date.today()
         params = {
             "dataset": DATASET,
@@ -77,17 +80,18 @@ class InstitutionService:
             response.raise_for_status()
             payload = response.json()
         except (requests.Timeout, requests.RequestException, ValueError) as error:
-            logger.warning(
-                "FinMind institution data unavailable (error_type=%s)",
-                type(error).__name__,
-            )
+            result = "timeout" if isinstance(error, requests.Timeout) else "fallback"
+            log_event(logger, "finmind_request_end", result=result, elapsed=elapsed_ms(started_at), error_type=type(error).__name__, service="institution", dataset=DATASET)
             return []
 
         if not isinstance(payload, dict) or payload.get("status") != 200:
+            log_event(logger, "finmind_request_end", result="fallback", elapsed=elapsed_ms(started_at), error_type="InvalidPayload", service="institution", dataset=DATASET)
             return []
         data = payload.get("data")
         if not isinstance(data, list):
+            log_event(logger, "finmind_request_end", result="fallback", elapsed=elapsed_ms(started_at), error_type="InvalidData", service="institution", dataset=DATASET)
             return []
+        log_event(logger, "finmind_request_end", result="success", elapsed=elapsed_ms(started_at), service="institution", dataset=DATASET)
         return [row for row in data if isinstance(row, dict)]
 
 

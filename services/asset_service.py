@@ -6,9 +6,11 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from time import perf_counter
 
 import requests
 from requests import RequestException
+from core.observability import elapsed_ms, log_event
 
 
 logger = logging.getLogger(__name__)
@@ -54,8 +56,10 @@ class AssetService:
             return self._asset_from_stale_cache(cache, symbol)
 
         if self._cache_is_fresh(cache, now):
+            log_event(logger, "asset_cache_hit", result="cache_hit")
             return self._asset_from_cache(cache, symbol)
 
+        log_event(logger, "asset_cache_miss", result="cache_miss")
         refreshed = self._refresh(cache, now)
         if refreshed is not None:
             return self._asset_from_cache(refreshed, symbol)
@@ -217,10 +221,7 @@ class AssetService:
                 os.fsync(temporary.fileno())
             os.replace(temporary_path, self.cache_path)
         except OSError as error:
-            logger.warning(
-                "Asset cache write failed (error_type=%s)",
-                type(error).__name__,
-            )
+            log_event(logger, "asset_cache_write_end", result="fallback", error_type=type(error).__name__)
             if temporary_path is not None:
                 try:
                     temporary_path.unlink(missing_ok=True)
@@ -229,15 +230,22 @@ class AssetService:
 
     @staticmethod
     def _request_json(method, url):
+        started_at = perf_counter()
+        operation = {
+            TWSE_COMPANY_URL: "twse_company",
+            TPEX_COMPANY_URL: "tpex_company",
+            TWSE_ETF_URL: "twse_etf",
+            TPEX_ETF_URL: "tpex_etf",
+        }.get(url, "asset_metadata")
         try:
             response = requests.request(method, url, timeout=TIMEOUT_SECONDS)
             response.raise_for_status()
-            return response.json()
+            payload = response.json()
+            log_event(logger, "asset_request_end", result="success", elapsed=elapsed_ms(started_at), service="asset", operation=operation)
+            return payload
         except (requests.Timeout, RequestException, ValueError, TypeError) as error:
-            logger.warning(
-                "Asset metadata source failed (error_type=%s)",
-                type(error).__name__,
-            )
+            result = "timeout" if isinstance(error, requests.Timeout) else "fallback"
+            log_event(logger, "asset_request_end", result=result, elapsed=elapsed_ms(started_at), error_type=type(error).__name__, service="asset", operation=operation)
             return None
 
     def _fetch_twse_companies(self):

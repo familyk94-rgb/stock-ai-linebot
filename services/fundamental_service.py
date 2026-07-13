@@ -2,10 +2,12 @@ import logging
 import math
 import os
 from datetime import date, timedelta
+from time import perf_counter
 
 import requests
 
 from app.config import FINMIND_API_TOKEN
+from core.observability import elapsed_ms, log_event
 
 
 logger = logging.getLogger(__name__)
@@ -52,6 +54,7 @@ class FundamentalService:
         return result
 
     def _fetch_dataset(self, dataset: str, stock_id: str, days: int) -> list[dict]:
+        started_at = perf_counter()
         end_date = date.today()
         params = {
             "dataset": dataset,
@@ -72,22 +75,20 @@ class FundamentalService:
             response.raise_for_status()
             payload = response.json()
         except (requests.Timeout, requests.RequestException, ValueError) as error:
-            logger.warning(
-                "FinMind dataset unavailable (dataset=%s, error_type=%s)",
-                dataset,
-                type(error).__name__,
-            )
+            result = "timeout" if isinstance(error, requests.Timeout) else "fallback"
+            log_event(logger, "finmind_request_end", result=result, elapsed=elapsed_ms(started_at), error_type=type(error).__name__, service="fundamental", dataset=dataset)
             return []
 
         if not isinstance(payload, dict):
-            logger.warning("FinMind dataset returned invalid JSON structure (dataset=%s)", dataset)
+            log_event(logger, "finmind_request_end", result="fallback", elapsed=elapsed_ms(started_at), error_type="InvalidPayload", service="fundamental", dataset=dataset)
             return []
         if payload.get("status") != 200:
-            logger.warning("FinMind dataset returned unsuccessful API status (dataset=%s)", dataset)
+            log_event(logger, "finmind_request_end", result="fallback", elapsed=elapsed_ms(started_at), error_type="ApiStatus", service="fundamental", dataset=dataset)
             return []
         if not isinstance(payload.get("data"), list):
-            logger.warning("FinMind dataset returned invalid data structure (dataset=%s)", dataset)
+            log_event(logger, "finmind_request_end", result="fallback", elapsed=elapsed_ms(started_at), error_type="InvalidData", service="fundamental", dataset=dataset)
             return []
+        log_event(logger, "finmind_request_end", result="success", elapsed=elapsed_ms(started_at), service="fundamental", dataset=dataset)
         return [row for row in payload["data"] if isinstance(row, dict)]
 
 

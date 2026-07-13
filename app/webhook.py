@@ -1,5 +1,7 @@
 ﻿import logging
 
+from time import perf_counter
+
 from fastapi import APIRouter, Request, HTTPException
 
 from linebot.v3.exceptions import InvalidSignatureError
@@ -18,28 +20,46 @@ from app.config import LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET
 from app.flex.builder import build_stock_dashboard_flex
 from services.ai_service import ai_stock_analysis
 from services.market_service import get_market_info
+from core.observability import clear_request_id, elapsed_ms, log_event, set_request_id
 
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
-handler = WebhookHandler(LINE_CHANNEL_SECRET)
+configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN or "")
+handler = WebhookHandler(LINE_CHANNEL_SECRET or "")
 
 
 @router.post("/webhook")
 async def line_webhook(request: Request):
-    signature = request.headers.get("X-Line-Signature")
-    body = await request.body()
-    body_text = body.decode("utf-8")
-
+    request_token = set_request_id(request.headers.get("X-Request-ID"))
+    started_at = perf_counter()
+    request_result = "success"
+    log_event(logger, "webhook_request_start", result="success")
     try:
+        signature = request.headers.get("X-Line-Signature")
+        body = await request.body()
+        body_text = body.decode("utf-8")
         handler.handle(body_text, signature)
     except InvalidSignatureError:
+        request_result = "error"
+        log_event(logger, "webhook_signature_invalid", result="error")
         raise HTTPException(status_code=400, detail="Invalid signature")
-    except Exception:
-        logger.exception("LINE webhook handling failed")
+    except Exception as error:
+        request_result = "error"
+        log_event(logger, "webhook_handler_end", result="error", error_type=type(error).__name__)
         return {"status": "error"}
+
+    finally:
+        try:
+            log_event(
+                logger,
+                "webhook_request_end",
+                result=request_result,
+                elapsed=elapsed_ms(started_at),
+            )
+        finally:
+            clear_request_id(request_token)
 
     return {"status": "ok"}
 
@@ -53,23 +73,28 @@ def handle_text_message(event: MessageEvent):
         return
 
     stock_code = user_text
+    log_event(logger, "stock_query_received", result="success", stock_id=stock_code)
 
     try:
-        market_data = get_market_info(stock_code)
+        market_started = perf_counter()
+        log_event(logger, "market_analysis_start", result="success", stock_id=stock_code)
+        try:
+            market_data = get_market_info(stock_code)
+            if not isinstance(market_data, dict):
+                raise TypeError(
+                    f"market_data 應該是 dict，但收到 {type(market_data).__name__}"
+                )
+            market_result = "success" if market_data.get("price") is not None else "fallback"
+        except TimeoutError as error:
+            log_event(logger, "market_analysis_end", result="timeout", elapsed=elapsed_ms(market_started), error_type=type(error).__name__, stock_id=stock_code)
+            raise
+        except Exception as error:
+            log_event(logger, "market_analysis_end", result="error", elapsed=elapsed_ms(market_started), error_type=type(error).__name__, stock_id=stock_code)
+            raise
+        else:
+            log_event(logger, "market_analysis_end", result=market_result, elapsed=elapsed_ms(market_started), stock_id=stock_code)
 
-        if not isinstance(market_data, dict):
-            raise TypeError(
-                f"market_data 應該是 dict，但收到 {type(market_data).__name__}"
-            )
-
-        logger.info(
-            "Market data loaded",
-            extra={
-                "stock_code": stock_code,
-                "has_price": market_data.get("price") is not None,
-                "has_core": bool(market_data.get("core")),
-            },
-        )
+        log_event(logger, "market_data_loaded", result=market_result, stock_id=stock_code)
 
         if market_data.get("price") is None:
             safe_reply_text(
@@ -79,9 +104,12 @@ def handle_text_message(event: MessageEvent):
             return
 
         try:
+            ai_started = perf_counter()
+            log_event(logger, "ai_analysis_start", result="success", stock_id=stock_code)
             ai_result = ai_stock_analysis(market_data)
-        except Exception:
-            logger.exception("AI analysis failed", extra={"stock_code": stock_code})
+            log_event(logger, "ai_analysis_end", result="success", elapsed=elapsed_ms(ai_started), stock_id=stock_code)
+        except Exception as error:
+            log_event(logger, "ai_analysis_end", result="fallback", elapsed=elapsed_ms(ai_started), error_type=type(error).__name__, stock_id=stock_code)
             safe_reply_text(
                 event.reply_token,
                 "市場資料已取得，但 AI 分析服務暫時無法完成，請稍後再試。",
@@ -142,12 +170,20 @@ def handle_text_message(event: MessageEvent):
             ),
         }
 
-        flex_message = build_stock_dashboard_flex(flex_data)
+        flex_started = perf_counter()
+        log_event(logger, "flex_build_start", result="success", stock_id=stock_code)
+        try:
+            flex_message = build_stock_dashboard_flex(flex_data)
+        except Exception as error:
+            log_event(logger, "flex_build_end", result="error", elapsed=elapsed_ms(flex_started), error_type=type(error).__name__, stock_id=stock_code)
+            raise
+        else:
+            log_event(logger, "flex_build_end", result="success", elapsed=elapsed_ms(flex_started), stock_id=stock_code)
 
         reply_message(event.reply_token, flex_message)
 
-    except Exception:
-        logger.exception("LINE message handling failed", extra={"stock_code": stock_code})
+    except Exception as error:
+        log_event(logger, "line_message_end", result="error", error_type=type(error).__name__, stock_id=stock_code)
 
         safe_reply_text(
             event.reply_token,
@@ -156,14 +192,21 @@ def handle_text_message(event: MessageEvent):
 
 
 def reply_message(reply_token: str, message):
-    with ApiClient(configuration) as api_client:
-        line_bot_api = MessagingApi(api_client)
-        line_bot_api.reply_message(
-            ReplyMessageRequest(
-                reply_token=reply_token,
-                messages=[message],
+    started_at = perf_counter()
+    log_event(logger, "line_reply_start", result="success")
+    try:
+        with ApiClient(configuration) as api_client:
+            line_bot_api = MessagingApi(api_client)
+            line_bot_api.reply_message(
+                ReplyMessageRequest(
+                    reply_token=reply_token,
+                    messages=[message],
+                )
             )
-        )
+        log_event(logger, "line_reply_end", result="success", elapsed=elapsed_ms(started_at))
+    except Exception as error:
+        log_event(logger, "line_reply_end", result="error", elapsed=elapsed_ms(started_at), error_type=type(error).__name__)
+        raise
 
 
 def reply_text(reply_token: str, text: str):
@@ -176,5 +219,5 @@ def reply_text(reply_token: str, text: str):
 def safe_reply_text(reply_token: str, text: str):
     try:
         reply_text(reply_token, text)
-    except Exception:
-        logger.exception("LINE fallback text reply failed")
+    except Exception as error:
+        log_event(logger, "line_fallback_reply_end", result="error", error_type=type(error).__name__)

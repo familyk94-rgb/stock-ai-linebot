@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from time import perf_counter
 from difflib import SequenceMatcher
 
 from openai import OpenAI
@@ -8,6 +9,7 @@ from openai import OpenAI
 from app.config import OPENAI_API_KEY
 from core.explain_engine import build_analysis_sections
 from services.cache_service import get_cache, set_cache
+from core.observability import elapsed_ms, log_event
 
 
 logger = logging.getLogger(__name__)
@@ -42,15 +44,27 @@ def ai_stock_analysis(stock):
     cached = get_cache(cache_key)
 
     if isinstance(cached, dict):
+        log_event(logger, "ai_cache_hit", result="cache_hit", stock_id=stock.get("stock_id"), data_date=stock.get("date"))
         fallback = _limit_analysis_explain(build_analysis_sections(stock))
         if not _is_valid_cached_analysis(cached):
+            log_event(logger, "ai_analysis_end", result="fallback", error_type="InvalidCacheEntry")
             return fallback
-        return _limit_analysis_explain(cached, fallback=fallback)
+        analysis = _limit_analysis_explain(cached, fallback=fallback)
+        log_event(logger, "ai_analysis_end", result="cache_hit")
+        return analysis
 
+    log_event(logger, "ai_cache_miss", result="cache_miss", stock_id=stock.get("stock_id"), data_date=stock.get("date"))
     fallback = _limit_analysis_explain(build_analysis_sections(stock))
-    client = _create_client()
+    started_at = perf_counter()
+    try:
+        client = _create_client()
+    except Exception:
+        log_event(logger, "openai_analysis_end", result="fallback", elapsed=elapsed_ms(started_at), error_type="ClientInitializationError")
+        set_cache(cache_key, fallback)
+        return fallback
 
     if client is None:
+        log_event(logger, "openai_analysis_end", result="skipped", elapsed=elapsed_ms(started_at))
         set_cache(cache_key, fallback)
         return fallback
 
@@ -68,11 +82,13 @@ def ai_stock_analysis(stock):
             require_missing_fundamental=not bool(stock.get("financial")),
             require_missing_chip=not bool(stock.get("institution")),
         )
+        if analysis is fallback:
+            log_event(logger, "openai_analysis_end", result="fallback", elapsed=elapsed_ms(started_at), error_type="InvalidAIResponse")
+        else:
+            log_event(logger, "openai_analysis_end", result="success", elapsed=elapsed_ms(started_at))
     except Exception as error:
-        logger.warning(
-            "AI analysis failed; using local fallback (error_type=%s)",
-            type(error).__name__,
-        )
+        result = "timeout" if type(error).__name__ in {"Timeout", "APITimeoutError", "TimeoutError"} else "fallback"
+        log_event(logger, "openai_analysis_end", result=result, elapsed=elapsed_ms(started_at), error_type=type(error).__name__)
         analysis = fallback
 
     analysis = _limit_analysis_explain(analysis, fallback=fallback)
@@ -83,7 +99,6 @@ def ai_stock_analysis(stock):
 def _create_client():
     api_key = (OPENAI_API_KEY or "").strip()
     if not api_key:
-        logger.info("OpenAI API key is unavailable; using local fallback")
         return None
     return OpenAI(
         api_key=api_key,

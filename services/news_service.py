@@ -6,11 +6,13 @@ import logging
 import os
 from datetime import datetime, timedelta
 from typing import Any
+from time import perf_counter
 from zoneinfo import ZoneInfo
 
 import requests
 
 from app.config import FINMIND_API_TOKEN
+from core.observability import elapsed_ms, log_event
 
 
 logger = logging.getLogger(__name__)
@@ -74,6 +76,7 @@ class NewsService:
             "token": token,
         }
 
+        started_at = perf_counter()
         try:
             response = requests.get(
                 FINMIND_API_URL,
@@ -81,25 +84,27 @@ class NewsService:
                 timeout=REQUEST_TIMEOUT,
             )
             if response.status_code != 200:
-                logger.warning("FinMind news HTTP failure: %s", response.status_code)
+                log_event(logger, "finmind_request_end", result="fallback", elapsed=elapsed_ms(started_at), error_type="HttpStatus", service="news", dataset=NEWS_DATASET)
                 return _fallback()
             payload = response.json()
         except (requests.Timeout, requests.RequestException, ValueError) as exc:
-            logger.warning("FinMind news request failed: %s", type(exc).__name__)
+            result = "timeout" if isinstance(exc, requests.Timeout) else "fallback"
+            log_event(logger, "finmind_request_end", result=result, elapsed=elapsed_ms(started_at), error_type=type(exc).__name__, service="news", dataset=NEWS_DATASET)
             return _fallback()
 
         if not isinstance(payload, dict):
-            logger.warning("FinMind news payload has invalid type")
+            log_event(logger, "finmind_request_end", result="fallback", elapsed=elapsed_ms(started_at), error_type="InvalidPayload", service="news", dataset=NEWS_DATASET)
             return _fallback()
         if payload.get("status") != 200:
-            logger.warning("FinMind news API status is not successful")
+            log_event(logger, "finmind_request_end", result="fallback", elapsed=elapsed_ms(started_at), error_type="ApiStatus", service="news", dataset=NEWS_DATASET)
             return _fallback()
 
         raw_items = payload.get("data")
         if not isinstance(raw_items, list):
-            logger.warning("FinMind news data has invalid type")
+            log_event(logger, "finmind_request_end", result="fallback", elapsed=elapsed_ms(started_at), error_type="InvalidData", service="news", dataset=NEWS_DATASET)
             return _fallback()
 
+        log_event(logger, "finmind_request_end", result="success", elapsed=elapsed_ms(started_at), service="news", dataset=NEWS_DATASET)
         cleaned_items = []
         for raw_item in raw_items:
             cleaned = self._clean_item(raw_item)

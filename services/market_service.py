@@ -1,4 +1,5 @@
 import logging
+from time import perf_counter
 
 from services.asset_service import AssetService, asset_fallback
 from services.stock_service import get_stock_info
@@ -15,6 +16,7 @@ from core.market.composite_analysis_engine import (
     composite_fallback,
 )
 from core.shopkeeper_engine import get_composite_aware_advice
+from core.observability import elapsed_ms, log_event
 
 
 logger = logging.getLogger(__name__)
@@ -37,7 +39,23 @@ def format_price(value):
 
 
 def get_market_info(stock_id: str) -> dict:
+    started_at = perf_counter()
     stock_id = str(stock_id).strip()
+    log_event(logger, "market_service_start", result="success", stock_id=stock_id)
+    try:
+        market_data = _build_market_info(stock_id)
+    except TimeoutError as error:
+        log_event(logger, "market_service_end", result="timeout", elapsed=elapsed_ms(started_at), error_type=type(error).__name__, stock_id=stock_id)
+        raise
+    except Exception as error:
+        log_event(logger, "market_service_end", result="error", elapsed=elapsed_ms(started_at), error_type=type(error).__name__, stock_id=stock_id)
+        raise
+    result = "success" if isinstance(market_data, dict) and market_data.get("price") is not None else "fallback"
+    log_event(logger, "market_service_end", result=result, elapsed=elapsed_ms(started_at), stock_id=stock_id)
+    return market_data
+
+
+def _build_market_info(stock_id: str) -> dict:
     fundamental_engine = FundamentalEngine()
     institution_engine = InstitutionEngine()
     news_engine = NewsEngine()
@@ -127,8 +145,8 @@ def get_market_info(stock_id: str) -> dict:
     try:
         ai = GanzaiAI(stock_data)
         stock_data["core"] = ai.run() or {}
-    except Exception as e:
-        print(f"[GanzaiAI Error] {e}")
+    except Exception as error:
+        log_event(logger, "ai_core_end", result="fallback", error_type=type(error).__name__, stock_id=stock_id)
         stock_data["core"] = {
             "data_completeness": calculate_data_completeness(stock_data)
         }
@@ -167,10 +185,7 @@ def _get_fundamental_analysis(
     try:
         return engine.analyze(stock_id, asset=asset)
     except Exception as error:
-        logger.warning(
-            "Fundamental analysis failed; using fallback (error_type=%s)",
-            type(error).__name__,
-        )
+        log_event(logger, "service_fallback", result="fallback", error_type=type(error).__name__, service="fundamental")
         return _fundamental_fallback(asset)
 
 
@@ -195,10 +210,7 @@ def _get_institution_analysis(engine: InstitutionEngine, stock_id: str) -> dict:
     try:
         return engine.analyze(stock_id)
     except Exception as error:
-        logger.warning(
-            "Institution analysis failed; using fallback (error_type=%s)",
-            type(error).__name__,
-        )
+        log_event(logger, "service_fallback", result="fallback", error_type=type(error).__name__, service="institution")
         return _institution_fallback()
 
 
@@ -222,10 +234,7 @@ def _get_news_analysis(engine: NewsEngine, stock_id: str) -> dict:
     try:
         return engine.analyze(stock_id)
     except Exception as error:
-        logger.warning(
-            "News analysis failed; using fallback (error_type=%s)",
-            type(error).__name__,
-        )
+        log_event(logger, "service_fallback", result="fallback", error_type=type(error).__name__, service="news")
         return _news_fallback()
 
 
@@ -253,10 +262,7 @@ def _get_composite_analysis(
     try:
         return engine.analyze(technical, financial, institution, news)
     except Exception as error:
-        logger.warning(
-            "Composite analysis failed; using fallback (error_type=%s)",
-            type(error).__name__,
-        )
+        log_event(logger, "service_fallback", result="fallback", error_type=type(error).__name__, service="composite")
         return composite_fallback()
 
 
@@ -278,10 +284,7 @@ def _get_data_quality(engine: DataQualityEngine, market_data: dict) -> dict:
     try:
         return engine.analyze(market_data)
     except Exception as error:
-        logger.warning(
-            "Data quality analysis failed; using fallback (error_type=%s)",
-            type(error).__name__,
-        )
+        log_event(logger, "service_fallback", result="fallback", error_type=type(error).__name__, service="data_quality")
         return data_quality_fallback()
 
 
@@ -289,8 +292,5 @@ def _get_asset(service: AssetService, stock_id: str) -> dict:
     try:
         return service.get_asset(stock_id)
     except Exception as error:
-        logger.warning(
-            "Asset metadata failed; using fallback (error_type=%s)",
-            type(error).__name__,
-        )
+        log_event(logger, "service_fallback", result="fallback", error_type=type(error).__name__, service="asset")
         return asset_fallback()
