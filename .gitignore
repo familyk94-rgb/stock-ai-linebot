@@ -18,3 +18,8 @@ __pycache__/
 
 # Windows
 Thumbs.db
+
+# Local usage tracking database
+data/usage.db
+data/usage.db-shm
+data/usage.db-wal

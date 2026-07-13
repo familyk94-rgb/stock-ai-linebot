@@ -10,10 +10,12 @@ from app.config import OPENAI_API_KEY
 from core.explain_engine import build_analysis_sections
 from services.cache_service import get_cache, set_cache
 from core.observability import elapsed_ms, log_event
+from services.usage_service import record_analysis_usage
 
 
 logger = logging.getLogger(__name__)
 OPENAI_TIMEOUT_SECONDS = 15
+OPENAI_MODEL = "gpt-4.1-mini"
 MAX_EXPLAIN_LENGTH = 3000
 SUMMARY_LABELS = (
     "趨勢總結",
@@ -48,30 +50,35 @@ def ai_stock_analysis(stock):
         fallback = _limit_analysis_explain(build_analysis_sections(stock))
         if not _is_valid_cached_analysis(cached):
             log_event(logger, "ai_analysis_end", result="fallback", error_type="InvalidCacheEntry")
+            _track_usage(model=OPENAI_MODEL, result="fallback", cache_hit=False, openai_call=False)
             return fallback
         analysis = _limit_analysis_explain(cached, fallback=fallback)
         log_event(logger, "ai_analysis_end", result="cache_hit")
+        _track_usage(model=OPENAI_MODEL, result="success", cache_hit=True, openai_call=False)
         return analysis
 
     log_event(logger, "ai_cache_miss", result="cache_miss", stock_id=stock.get("stock_id"), data_date=stock.get("date"))
     fallback = _limit_analysis_explain(build_analysis_sections(stock))
     started_at = perf_counter()
+    response = None
     try:
         client = _create_client()
     except Exception:
         log_event(logger, "openai_analysis_end", result="fallback", elapsed=elapsed_ms(started_at), error_type="ClientInitializationError")
+        _track_usage(model=OPENAI_MODEL, result="fallback", cache_hit=False, openai_call=False)
         set_cache(cache_key, fallback)
         return fallback
 
     if client is None:
         log_event(logger, "openai_analysis_end", result="skipped", elapsed=elapsed_ms(started_at))
+        _track_usage(model=OPENAI_MODEL, result="fallback", cache_hit=False, openai_call=False)
         set_cache(cache_key, fallback)
         return fallback
 
     try:
         prompt = _build_prompt(stock, fallback)
         response = client.chat.completions.create(
-            model="gpt-4.1-mini",
+            model=OPENAI_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2,
             timeout=OPENAI_TIMEOUT_SECONDS,
@@ -84,16 +91,45 @@ def ai_stock_analysis(stock):
         )
         if analysis is fallback:
             log_event(logger, "openai_analysis_end", result="fallback", elapsed=elapsed_ms(started_at), error_type="InvalidAIResponse")
+            usage_result = "fallback"
         else:
             log_event(logger, "openai_analysis_end", result="success", elapsed=elapsed_ms(started_at))
+            usage_result = "success"
+        response_model = getattr(response, "model", None)
+        if not isinstance(response_model, str) or not response_model.strip():
+            response_model = OPENAI_MODEL
+        _track_usage(
+            model=response_model,
+            result=usage_result,
+            cache_hit=False,
+            openai_call=True,
+            usage=getattr(response, "usage", None),
+        )
     except Exception as error:
         result = "timeout" if type(error).__name__ in {"Timeout", "APITimeoutError", "TimeoutError"} else "fallback"
         log_event(logger, "openai_analysis_end", result=result, elapsed=elapsed_ms(started_at), error_type=type(error).__name__)
+        response_model = getattr(response, "model", None)
+        if not isinstance(response_model, str) or not response_model.strip():
+            response_model = OPENAI_MODEL
+        _track_usage(
+            model=response_model,
+            result=result,
+            cache_hit=False,
+            openai_call=True,
+            usage=getattr(response, "usage", None),
+        )
         analysis = fallback
 
     analysis = _limit_analysis_explain(analysis, fallback=fallback)
     set_cache(cache_key, analysis)
     return analysis
+
+
+def _track_usage(**kwargs) -> None:
+    try:
+        record_analysis_usage(**kwargs)
+    except Exception as error:
+        log_event(logger, "usage_record_error", result="error", error_type=type(error).__name__, operation="stock_analysis")
 
 
 def _create_client():

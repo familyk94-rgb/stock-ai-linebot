@@ -33,6 +33,9 @@ EVENTS = frozenset(
         "line_message_end", "line_fallback_reply_end", "finmind_request_end",
         "asset_request_end", "asset_cache_hit", "asset_cache_miss",
         "asset_cache_write_end", "service_fallback",
+        "usage_record_success", "usage_record_error",
+        "usage_summary_query_success", "usage_summary_query_error",
+        "pricing_unknown", "usage_metadata_missing",
     }
 )
 
