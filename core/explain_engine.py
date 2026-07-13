@@ -104,6 +104,8 @@ def _mid_term_advice(stock: dict, core: dict, technical: dict) -> str:
 
 def _long_term_advice(stock: dict) -> str:
     financial = stock.get("financial") or {}
+    if financial.get("applicability") == "not_applicable":
+        return "ETF 不適用個股基本面，長線仍需追蹤其標的與市場風險。"
     if not financial.get("available"):
         return "基本面資料尚未整合，暫不做長線定論。"
     return "需持續追蹤基本面變化，不宜只依技術訊號決策。"
@@ -177,6 +179,11 @@ def _data_status(data) -> str:
 
 
 def _fundamental_section(financial) -> str:
+    if (
+        isinstance(financial, dict)
+        and financial.get("applicability") == "not_applicable"
+    ):
+        return "基本面：ETF 不適用個股基本面"
     if not isinstance(financial, dict) or not financial.get("available"):
         return "基本面：尚未整合"
 

@@ -52,7 +52,15 @@ def _analyze(market_data: dict, fetched_at: datetime) -> dict:
     )
 
     financial = market_data.get("financial")
-    fundamental_available = isinstance(financial, dict) and financial.get("available") is True
+    fundamental_not_applicable = (
+        isinstance(financial, dict)
+        and financial.get("applicability") == "not_applicable"
+    )
+    fundamental_available = (
+        not fundamental_not_applicable
+        and isinstance(financial, dict)
+        and financial.get("available") is True
+    )
     fundamental_date = (
         _not_future(_metadata_date(financial), today) if fundamental_available else None
     )
@@ -83,8 +91,10 @@ def _analyze(market_data: dict, fetched_at: datetime) -> dict:
         "institution": institution_date,
         "news": news_date,
     }
-    available_sources = [name for name in SOURCE_NAMES if availability[name]]
-    missing_sources = [name for name in SOURCE_NAMES if not availability[name]]
+    not_applicable_sources = ["fundamental"] if fundamental_not_applicable else []
+    applicable_sources = [name for name in SOURCE_NAMES if name not in not_applicable_sources]
+    available_sources = [name for name in applicable_sources if availability[name]]
+    missing_sources = [name for name in applicable_sources if not availability[name]]
 
     is_stale = any(
         (
@@ -96,9 +106,10 @@ def _analyze(market_data: dict, fetched_at: datetime) -> dict:
     )
 
     available_count = len(available_sources)
+    applicable_count = len(applicable_sources)
     if not price_available or available_count < 2:
         status = "資料不足"
-    elif available_count < 4 or is_stale:
+    elif available_count < applicable_count - 1 or is_stale:
         status = "部分資料"
     else:
         status = "正常"
@@ -112,11 +123,12 @@ def _analyze(market_data: dict, fetched_at: datetime) -> dict:
         "is_stale": is_stale,
         "available_sources": available_sources,
         "missing_sources": missing_sources,
+        "not_applicable_sources": not_applicable_sources,
         "source_dates": {
             name: source_date_values[name].isoformat() if source_date_values[name] else None
             for name in SOURCE_NAMES
         },
-        "data_completeness": available_count * 20,
+        "data_completeness": round(available_count / applicable_count * 100),
     }
 
 
@@ -128,6 +140,7 @@ def data_quality_fallback(fetched_at: datetime | None = None) -> dict:
         "is_stale": False,
         "available_sources": [],
         "missing_sources": list(SOURCE_NAMES),
+        "not_applicable_sources": [],
         "source_dates": {name: None for name in SOURCE_NAMES},
         "data_completeness": 0,
     }

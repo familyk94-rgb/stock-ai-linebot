@@ -51,7 +51,7 @@ def get_market_info(stock_id: str) -> dict:
     stock = get_stock_info(stock_id)
 
     if not stock:
-        financial = _get_fundamental_analysis(fundamental_engine, stock_id)
+        financial = _get_fundamental_analysis(fundamental_engine, stock_id, asset)
         institution = _get_institution_analysis(institution_engine, stock_id)
         news = _get_news_analysis(news_engine, stock_id)
         composite = _get_composite_analysis(
@@ -136,6 +136,7 @@ def get_market_info(stock_id: str) -> dict:
     stock_data["financial"] = _get_fundamental_analysis(
         fundamental_engine,
         stock_id,
+        asset,
     )
     stock_data["institution"] = _get_institution_analysis(
         institution_engine,
@@ -158,18 +159,23 @@ def get_market_info(stock_id: str) -> dict:
     return stock_data
 
 
-def _get_fundamental_analysis(engine: FundamentalEngine, stock_id: str) -> dict:
+def _get_fundamental_analysis(
+    engine: FundamentalEngine,
+    stock_id: str,
+    asset: dict,
+) -> dict:
     try:
-        return engine.analyze(stock_id)
+        return engine.analyze(stock_id, asset=asset)
     except Exception as error:
         logger.warning(
             "Fundamental analysis failed; using fallback (error_type=%s)",
             type(error).__name__,
         )
-        return _fundamental_fallback()
+        return _fundamental_fallback(asset)
 
 
-def _fundamental_fallback() -> dict:
+def _fundamental_fallback(asset: dict | None = None) -> dict:
+    is_etf = isinstance(asset, dict) and asset.get("type") == "etf"
     return {
         "eps": None,
         "pe": None,
@@ -178,9 +184,10 @@ def _fundamental_fallback() -> dict:
         "revenue_growth": None,
         "dividend_yield": None,
         "score": 0,
-        "summary": "尚未整合",
+        "summary": "ETF 不適用個股基本面" if is_etf else "尚未整合",
         "signals": [],
         "available": False,
+        "applicability": "not_applicable" if is_etf else "unknown",
     }
 
 

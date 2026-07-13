@@ -39,13 +39,21 @@ class CompositeAnalysisEngine:
 
 
 def _analyze_modules(modules: dict[str, Any]) -> dict:
+    not_applicable = {
+        "financial"
+        if isinstance(modules.get("financial"), dict)
+        and modules["financial"].get("applicability") == "not_applicable"
+        else None
+    } - {None}
+    applicable_modules = [key for key, _, _ in MODULES if key not in not_applicable]
     valid_scores = {
         key: score
         for key, _, _ in MODULES
+        if key in applicable_modules
         if (score := _valid_score(modules.get(key))) is not None
     }
     if not valid_scores:
-        return composite_fallback()
+        return composite_fallback(not_applicable)
 
     available_weight = sum(
         base_weight
@@ -76,7 +84,8 @@ def _analyze_modules(modules: dict[str, Any]) -> dict:
     )
     score = max(0, min(100, round(exact_score)))
     available_modules = len(valid_scores)
-    coverage = available_modules * 25
+    total_modules = len(applicable_modules)
+    coverage = round(available_modules / total_modules * 100)
 
     return {
         "available": True,
@@ -84,9 +93,9 @@ def _analyze_modules(modules: dict[str, Any]) -> dict:
         "summary": _summary(score),
         "coverage": coverage,
         "available_modules": available_modules,
-        "total_modules": TOTAL_MODULES,
+        "total_modules": total_modules,
         "contributions": contributions,
-        "signals": _signals(contributions, coverage),
+        "signals": _signals(contributions, coverage, not_applicable),
     }
 
 
@@ -113,11 +122,18 @@ def _summary(score: int) -> str:
     return "整體市場訊號偏空"
 
 
-def _signals(contributions: dict, coverage: int) -> list[str]:
+def _signals(
+    contributions: dict,
+    coverage: int,
+    not_applicable: set[str] | None = None,
+) -> list[str]:
     signals = []
+    not_applicable = not_applicable or set()
     for key, label, _ in MODULES:
         module = contributions[key]
-        if module["available"]:
+        if key in not_applicable:
+            signals.append(f"{label}：不適用")
+        elif module["available"]:
             signals.append(f"{label}：{round(module['score'])} 分")
         else:
             signals.append(f"{label}：資料不足")
@@ -135,7 +151,8 @@ def _unavailable_contribution(base_weight: int) -> dict:
     }
 
 
-def composite_fallback() -> dict:
+def composite_fallback(not_applicable: set[str] | None = None) -> dict:
+    not_applicable = not_applicable or set()
     contributions = {
         key: _unavailable_contribution(base_weight)
         for key, _, base_weight in MODULES
@@ -146,7 +163,7 @@ def composite_fallback() -> dict:
         "summary": "綜合分析資料不足",
         "coverage": 0,
         "available_modules": 0,
-        "total_modules": TOTAL_MODULES,
+        "total_modules": TOTAL_MODULES - len(not_applicable),
         "contributions": contributions,
-        "signals": _signals(contributions, 0),
+        "signals": _signals(contributions, 0, not_applicable),
     }

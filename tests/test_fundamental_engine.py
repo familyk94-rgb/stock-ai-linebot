@@ -14,6 +14,7 @@ EXPECTED_KEYS = {
     "summary",
     "signals",
     "available",
+    "applicability",
 }
 
 EXPECTED_FALLBACK = {
@@ -27,16 +28,36 @@ EXPECTED_FALLBACK = {
     "summary": "尚未整合",
     "signals": [],
     "available": False,
+    "applicability": "unknown",
 }
 
 
-def test_fundamental_engine_returns_fixed_keys():
+def _mock_unavailable_fundamental(monkeypatch):
+    monkeypatch.setattr(
+        FundamentalService,
+        "get_fundamental",
+        lambda self, stock_id, asset=None: {
+            "eps": None,
+            "pe": None,
+            "pb": None,
+            "roe": None,
+            "revenue_growth": None,
+            "dividend_yield": None,
+            "available": False,
+            "applicability": "unknown",
+        },
+    )
+
+
+def test_fundamental_engine_returns_fixed_keys(monkeypatch):
+    _mock_unavailable_fundamental(monkeypatch)
     result = FundamentalEngine().analyze({})
 
     assert set(result) == EXPECTED_KEYS
 
 
-def test_fundamental_engine_returns_unavailable_defaults_without_data():
+def test_fundamental_engine_returns_unavailable_defaults_without_data(monkeypatch):
+    _mock_unavailable_fundamental(monkeypatch)
     result = FundamentalEngine().analyze({})
 
     assert result["summary"] == "尚未整合"
@@ -45,7 +66,8 @@ def test_fundamental_engine_returns_unavailable_defaults_without_data():
     assert result["signals"] == []
 
 
-def test_fundamental_engine_returns_defaults_for_none():
+def test_fundamental_engine_returns_defaults_for_none(monkeypatch):
+    _mock_unavailable_fundamental(monkeypatch)
     result = FundamentalEngine().analyze(None)
 
     assert set(result) == EXPECTED_KEYS
@@ -63,7 +85,7 @@ def test_market_service_uses_financial_fallback_when_engine_fails(monkeypatch):
     )
     calls = {"count": 0}
 
-    def raise_fundamental_error(self, stock_data):
+    def raise_fundamental_error(self, stock_data, asset=None):
         calls["count"] += 1
         raise RuntimeError("simulated failure")
 
@@ -114,13 +136,14 @@ def test_market_service_uses_financial_fallback_when_engine_fails(monkeypatch):
         "summary": "尚未整合",
         "signals": [],
         "available": False,
+        "applicability": "unknown",
     }
 
 
 def test_engine_falls_back_when_service_raises(monkeypatch):
     calls = {"count": 0}
 
-    def raise_error(self, stock_id):
+    def raise_error(self, stock_id, asset=None):
         calls["count"] += 1
         raise RuntimeError("simulated failure")
 
@@ -136,7 +159,7 @@ def test_engine_falls_back_when_service_returns_none(monkeypatch):
     monkeypatch.setattr(
         FundamentalService,
         "get_fundamental",
-        lambda self, stock_id: None,
+        lambda self, stock_id, asset=None: None,
     )
 
     assert FundamentalEngine().analyze("2330") == EXPECTED_FALLBACK
@@ -146,7 +169,7 @@ def test_engine_falls_back_when_service_returns_non_dict(monkeypatch):
     monkeypatch.setattr(
         FundamentalService,
         "get_fundamental",
-        lambda self, stock_id: "invalid",
+        lambda self, stock_id, asset=None: "invalid",
     )
 
     assert FundamentalEngine().analyze("2330") == EXPECTED_FALLBACK
@@ -156,7 +179,7 @@ def test_engine_falls_back_when_service_omits_required_key(monkeypatch):
     monkeypatch.setattr(
         FundamentalService,
         "get_fundamental",
-        lambda self, stock_id: {"available": False},
+        lambda self, stock_id, asset=None: {"available": False},
     )
 
     assert FundamentalEngine().analyze("2330") == EXPECTED_FALLBACK
@@ -165,7 +188,7 @@ def test_engine_falls_back_when_service_omits_required_key(monkeypatch):
 def test_engine_calls_service_once_per_analysis(monkeypatch):
     calls = {"count": 0}
 
-    def get_fundamental(self, stock_id):
+    def get_fundamental(self, stock_id, asset=None):
         calls["count"] += 1
         return {
             "eps": None,
@@ -175,6 +198,7 @@ def test_engine_calls_service_once_per_analysis(monkeypatch):
             "revenue_growth": None,
             "dividend_yield": None,
             "available": False,
+            "applicability": "unknown",
         }
 
     monkeypatch.setattr(FundamentalService, "get_fundamental", get_fundamental)
@@ -189,7 +213,7 @@ def test_engine_scores_partial_data_without_penalizing_missing_fields(monkeypatc
     monkeypatch.setattr(
         FundamentalService,
         "get_fundamental",
-        lambda self, stock_id: {
+        lambda self, stock_id, asset=None: {
             "eps": 5.0,
             "pe": None,
             "pb": None,
@@ -197,6 +221,7 @@ def test_engine_scores_partial_data_without_penalizing_missing_fields(monkeypatc
             "revenue_growth": 12.0,
             "dividend_yield": None,
             "available": True,
+            "applicability": "unknown",
         },
     )
 
@@ -213,7 +238,7 @@ def test_engine_unavailable_service_result_uses_fixed_fallback(monkeypatch):
     monkeypatch.setattr(
         FundamentalService,
         "get_fundamental",
-        lambda self, stock_id: {
+        lambda self, stock_id, asset=None: {
             "eps": None,
             "pe": None,
             "pb": None,
@@ -221,6 +246,7 @@ def test_engine_unavailable_service_result_uses_fixed_fallback(monkeypatch):
             "revenue_growth": None,
             "dividend_yield": None,
             "available": False,
+            "applicability": "unknown",
         },
     )
 
@@ -236,12 +262,13 @@ def _engine_result_with_fields(monkeypatch, **fields):
         "revenue_growth": None,
         "dividend_yield": None,
         "available": True,
+        "applicability": "unknown",
         **fields,
     }
     monkeypatch.setattr(
         FundamentalService,
         "get_fundamental",
-        lambda self, stock_id: data,
+        lambda self, stock_id, asset=None: data,
     )
     return FundamentalEngine().analyze("2330")
 
@@ -266,3 +293,107 @@ def test_sparse_score_caps_are_applied(monkeypatch):
     assert two_fields["summary"] == "基本面偏佳"
     assert all(result["roe"] is None for result in (one_field, two_fields, three_fields, four_fields))
     assert all(0 <= result["score"] <= 100 for result in (one_field, two_fields, three_fields, four_fields))
+
+
+def test_etf_engine_returns_fixed_not_applicable_contract():
+    result = FundamentalEngine().analyze("0050", asset={"type": "etf"})
+    assert result == {
+        "eps": None,
+        "pe": None,
+        "pb": None,
+        "roe": None,
+        "revenue_growth": None,
+        "dividend_yield": None,
+        "score": 0,
+        "summary": "ETF 不適用個股基本面",
+        "signals": [],
+        "available": False,
+        "applicability": "not_applicable",
+    }
+
+
+def test_etf_engine_service_exception_stays_not_applicable(monkeypatch):
+    monkeypatch.setattr(
+        FundamentalService,
+        "get_fundamental",
+        lambda self, stock_id, asset=None: (_ for _ in ()).throw(RuntimeError("simulated")),
+    )
+    result = FundamentalEngine().analyze("0050", asset={"type": "etf"})
+    assert result["applicability"] == "not_applicable"
+    assert result["summary"] == "ETF 不適用個股基本面"
+
+
+def test_stock_asset_is_explicitly_applicable_and_keeps_analysis(monkeypatch):
+    calls = []
+
+    def get_fundamental(self, stock_id, asset=None):
+        calls.append((stock_id, asset.copy()))
+        return {
+            "eps": 5.0,
+            "pe": None,
+            "pb": None,
+            "roe": None,
+            "revenue_growth": None,
+            "dividend_yield": None,
+            "available": True,
+            "applicability": "applicable",
+        }
+
+    monkeypatch.setattr(FundamentalService, "get_fundamental", get_fundamental)
+    result = FundamentalEngine().analyze("2330", asset={"type": "stock"})
+    assert calls == [("2330", {"type": "stock"})]
+    assert result["applicability"] == "applicable"
+    assert result["applicability"] != "not_applicable"
+    assert result["available"] is True
+    assert result["score"] == 60
+
+
+def test_market_service_passes_asset_to_fundamental_once(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        market_service.AssetService,
+        "get_asset",
+        lambda self, stock_id: calls.append(("asset", stock_id)) or {
+            "type": "etf", "source": "twse_etf", "confidence": "high"
+        },
+    )
+    monkeypatch.setattr(market_service, "get_stock_name", lambda stock_id: "ETF")
+    monkeypatch.setattr(market_service, "get_stock_info", lambda stock_id: None)
+
+    def fundamental(self, stock_id, asset=None):
+        calls.append(("fundamental", stock_id, asset["type"]))
+        return {
+            **EXPECTED_FALLBACK,
+            "summary": "ETF 不適用個股基本面",
+            "applicability": "not_applicable",
+        }
+
+    monkeypatch.setattr(market_service.FundamentalEngine, "analyze", fundamental)
+    monkeypatch.setattr(market_service.InstitutionEngine, "analyze", lambda self, stock_id: {"available": False})
+    monkeypatch.setattr(market_service.NewsEngine, "analyze", lambda self, stock_id: {"available": False})
+    result = market_service.get_market_info("0050")
+    assert calls == [("asset", "0050"), ("fundamental", "0050", "etf")]
+    assert result["financial"]["applicability"] == "not_applicable"
+
+
+def test_asset_service_failure_passes_unknown_to_fundamental(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        market_service.AssetService,
+        "get_asset",
+        lambda self, stock_id: (_ for _ in ()).throw(RuntimeError("simulated")),
+    )
+    monkeypatch.setattr(market_service, "get_stock_name", lambda stock_id: "unknown")
+    monkeypatch.setattr(market_service, "get_stock_info", lambda stock_id: None)
+
+    def fundamental(self, stock_id, asset=None):
+        calls.append(asset.copy())
+        return EXPECTED_FALLBACK.copy()
+
+    monkeypatch.setattr(market_service.FundamentalEngine, "analyze", fundamental)
+    monkeypatch.setattr(market_service.InstitutionEngine, "analyze", lambda self, stock_id: {"available": False})
+    monkeypatch.setattr(market_service.NewsEngine, "analyze", lambda self, stock_id: {"available": False})
+    result = market_service.get_market_info("0050")
+    assert calls == [{"type": "unknown", "source": None, "confidence": "low"}]
+    assert result["asset"]["type"] == "unknown"
+    assert result["financial"]["applicability"] == "unknown"

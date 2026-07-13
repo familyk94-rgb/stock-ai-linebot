@@ -9,22 +9,25 @@ REQUIRED_SERVICE_KEYS = {
     "revenue_growth",
     "dividend_yield",
     "available",
+    "applicability",
 }
 
 
 class FundamentalEngine:
-    def analyze(self, stock_id: str) -> dict:
+    def analyze(self, stock_id: str, asset: dict | None = None) -> dict:
         try:
-            fundamental = FundamentalService().get_fundamental(stock_id)
+            fundamental = FundamentalService().get_fundamental(stock_id, asset=asset)
         except Exception:
-            return _fundamental_fallback()
+            return _fundamental_fallback(_asset_applicability(asset))
 
         if not isinstance(fundamental, dict):
-            return _fundamental_fallback()
+            return _fundamental_fallback(_asset_applicability(asset))
         if not REQUIRED_SERVICE_KEYS.issubset(fundamental):
-            return _fundamental_fallback()
+            return _fundamental_fallback(_asset_applicability(asset))
+        if fundamental.get("applicability") == "not_applicable":
+            return _fundamental_not_applicable()
         if not fundamental.get("available"):
-            return _fundamental_fallback()
+            return _fundamental_fallback(fundamental.get("applicability", "unknown"))
 
         score, signals = _score_fundamental(fundamental)
         return {
@@ -38,6 +41,7 @@ class FundamentalEngine:
             "summary": _summary(score),
             "signals": signals,
             "available": True,
+            "applicability": fundamental.get("applicability", "unknown"),
         }
 
 
@@ -112,7 +116,19 @@ def _summary(score: int) -> str:
     return "基本面偏弱"
 
 
-def _fundamental_fallback() -> dict:
+def _asset_applicability(asset) -> str:
+    if not isinstance(asset, dict):
+        return "unknown"
+    if asset.get("type") == "etf":
+        return "not_applicable"
+    if asset.get("type") == "stock":
+        return "applicable"
+    return "unknown"
+
+
+def _fundamental_fallback(applicability: str = "unknown") -> dict:
+    if applicability == "not_applicable":
+        return _fundamental_not_applicable()
     return {
         "eps": None,
         "pe": None,
@@ -124,4 +140,21 @@ def _fundamental_fallback() -> dict:
         "summary": "尚未整合",
         "signals": [],
         "available": False,
+        "applicability": applicability if applicability in {"applicable", "unknown"} else "unknown",
+    }
+
+
+def _fundamental_not_applicable() -> dict:
+    return {
+        "eps": None,
+        "pe": None,
+        "pb": None,
+        "roe": None,
+        "revenue_growth": None,
+        "dividend_yield": None,
+        "score": 0,
+        "summary": "ETF 不適用個股基本面",
+        "signals": [],
+        "available": False,
+        "applicability": "not_applicable",
     }

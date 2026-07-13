@@ -56,6 +56,109 @@ def test_four_sources_available_is_normal():
     assert result["data_completeness"] == 80
 
 
+def test_etf_fundamental_is_not_applicable_and_full_coverage_is_complete():
+    result = analyze(
+        market(
+            financial={
+                "available": False,
+                "applicability": "not_applicable",
+            }
+        )
+    )
+    assert result["status"] == "正常"
+    assert result["data_completeness"] == 100
+    assert result["not_applicable_sources"] == ["fundamental"]
+    assert "fundamental" not in result["available_sources"]
+    assert "fundamental" not in result["missing_sources"]
+    assert result["source_dates"]["fundamental"] is None
+
+
+def test_etf_three_of_four_applicable_sources_is_seventy_five_percent():
+    result = analyze(
+        market(
+            financial={"available": False, "applicability": "not_applicable"},
+            institution={"available": False},
+        )
+    )
+    assert result["data_completeness"] == 75
+    assert result["missing_sources"] == ["institution"]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        (
+            {
+                "institution": {"available": False},
+                "news": {"available": False},
+            },
+            50,
+        ),
+        (
+            {
+                "technical": {},
+                "institution": {"available": False},
+                "news": {"available": False},
+            },
+            25,
+        ),
+        (
+            {
+                "date": None,
+                "price": None,
+                "technical": {},
+                "institution": {"available": False},
+                "news": {"available": False},
+            },
+            0,
+        ),
+    ],
+)
+def test_etf_completeness_boundaries(overrides, expected):
+    result = analyze(
+        market(
+            financial={"available": False, "applicability": "not_applicable"},
+            **overrides,
+        )
+    )
+    assert result["data_completeness"] == expected
+    if expected in {25, 0}:
+        assert result["status"] == "資料不足"
+
+
+def test_etf_source_sets_are_disjoint_unique_and_exhaustive():
+    result = analyze(
+        market(
+            financial={"available": False, "applicability": "not_applicable"},
+            institution={"available": False},
+        )
+    )
+    groups = [
+        result["available_sources"],
+        result["missing_sources"],
+        result["not_applicable_sources"],
+    ]
+    assert all(len(group) == len(set(group)) for group in groups)
+    assert set(groups[0]).isdisjoint(groups[1])
+    assert set(groups[0]).isdisjoint(groups[2])
+    assert set(groups[1]).isdisjoint(groups[2])
+    assert set().union(*(set(group) for group in groups)) == {
+        "price", "technical", "fundamental", "institution", "news"
+    }
+    assert result["not_applicable_sources"] == ["fundamental"]
+    assert "fundamental" not in result["available_sources"]
+    assert "fundamental" not in result["missing_sources"]
+
+
+def test_unknown_fundamental_remains_missing_with_stock_denominator():
+    result = analyze(
+        market(financial={"available": False, "applicability": "unknown"})
+    )
+    assert result["data_completeness"] == 80
+    assert result["not_applicable_sources"] == []
+    assert "fundamental" in result["missing_sources"]
+
+
 def test_explicit_technical_available_flag_without_values_is_not_enough():
     result = analyze(market(technical={"available": True}))
     assert "technical" in result["missing_sources"]

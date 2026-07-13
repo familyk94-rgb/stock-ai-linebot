@@ -325,7 +325,7 @@ def _mock_market(monkeypatch, no_price=False):
     })
     monkeypatch.setattr(market_service, "get_technical_indicators", lambda stock_id: {"trend": "up"})
     monkeypatch.setattr(market_service.GanzaiAI, "run", lambda self: {"score": 77, "decision": "hold", "confidence": 66})
-    monkeypatch.setattr(market_service.FundamentalEngine, "analyze", lambda self, stock_id: {"available": False, "score": 0})
+    monkeypatch.setattr(market_service.FundamentalEngine, "analyze", lambda self, stock_id, asset=None: {"available": False, "score": 0})
     monkeypatch.setattr(market_service.InstitutionEngine, "analyze", lambda self, stock_id: {"available": False, "score": 0})
     monkeypatch.setattr(market_service.NewsEngine, "analyze", lambda self, stock_id: {"available": False, "score": 0})
     monkeypatch.setattr(market_service.DataQualityEngine, "analyze", lambda self, data: {"status": "ok"})

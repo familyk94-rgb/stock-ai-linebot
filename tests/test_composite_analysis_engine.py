@@ -58,6 +58,56 @@ def test_three_modules_have_seventy_five_percent_coverage():
     assert result["available_modules"] == 3
 
 
+def test_etf_excludes_fundamental_and_renormalizes_three_modules():
+    financial = {"available": False, "score": 0, "applicability": "not_applicable"}
+    result = analyze(module(90), financial, module(60), module(30))
+    assert result["coverage"] == 100
+    assert result["available_modules"] == 3
+    assert result["total_modules"] == 3
+    assert result["score"] == round((90 * 35 + 60 * 20 + 30 * 20) / 75)
+    assert result["contributions"]["financial"]["normalized_weight"] == 0
+    assert any("不適用" in signal for signal in result["signals"])
+
+
+def test_etf_partial_coverage_uses_three_applicable_modules():
+    financial = {"available": False, "score": 0, "applicability": "not_applicable"}
+    result = analyze(module(80), financial, module(60), module(20, False))
+    assert result["coverage"] == 67
+    assert result["available_modules"] == 2
+    assert result["total_modules"] == 3
+
+
+def test_etf_one_available_module_has_thirty_three_percent_coverage():
+    financial = {"available": False, "score": 0, "applicability": "not_applicable"}
+    result = analyze(module(85), financial, module(0, False), module(0, False))
+    assert result["coverage"] == 33
+    assert result["available_modules"] == 1
+    assert result["total_modules"] == 3
+    assert result["contributions"]["financial"]["available"] is False
+    assert "missing_modules" not in result
+    assert "基本面：不適用" in result["signals"]
+    assert "基本面：資料不足" not in result["signals"]
+    assert 0 <= result["score"] <= 100
+
+
+def test_etf_no_available_modules_keeps_three_module_denominator():
+    financial = {"available": False, "score": 0, "applicability": "not_applicable"}
+    result = analyze(module(0, False), financial, module(0, False), module(0, False))
+    assert result["available"] is False
+    assert result["coverage"] == 0
+    assert result["total_modules"] == 3
+    assert "基本面：不適用" in result["signals"]
+    assert "基本面：資料不足" not in result["signals"]
+    assert result["summary"] == composite_fallback()["summary"]
+
+
+def test_unknown_fundamental_remains_in_four_module_contract():
+    financial = {"available": False, "score": 0, "applicability": "unknown"}
+    result = analyze(module(80), financial, module(60), module(40))
+    assert result["coverage"] == 75
+    assert result["total_modules"] == 4
+
+
 def test_no_available_modules_returns_complete_fallback():
     assert analyze(None, {}, module(20, False), {"score": 50}) == composite_fallback()
 
@@ -183,9 +233,9 @@ def _mock_market_dependencies(monkeypatch):
         lambda self: {"score": 80, "confidence": 70, "data_completeness": 60},
     )
 
-    def financial(self, stock_id):
+    def financial(self, stock_id, asset=None):
         calls["financial"] += 1
-        return {"available": True, "score": 60, "marker": "financial"}
+        return {"available": True, "score": 60, "marker": "financial", "applicability": "unknown"}
 
     def institution(self, stock_id):
         calls["institution"] += 1
@@ -316,6 +366,7 @@ def test_market_service_data_quality_exception_uses_fixed_fallback(monkeypatch, 
         "is_stale": False,
         "available_sources": [],
         "missing_sources": ["price", "technical", "fundamental", "institution", "news"],
+        "not_applicable_sources": [],
         "source_dates": {
             "price": None,
             "technical": None,

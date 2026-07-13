@@ -16,6 +16,27 @@ def test_unavailable_fundamental_remains_unintegrated():
     assert "AI判定：" not in explain
 
 
+def test_etf_fundamental_displays_not_applicable_without_company_metrics():
+    explain = _explain(
+        {
+            "available": False,
+            "applicability": "not_applicable",
+            "eps": 99,
+            "pe": 10,
+            "pb": 2,
+            "revenue_growth": 20,
+            "dividend_yield": 5,
+        }
+    )
+    assert "基本面：ETF 不適用個股基本面" in explain
+    assert "EPS：" not in explain
+    assert "本益比(PER)：" not in explain
+    assert "股價淨值比(PBR)：" not in explain
+    assert "月營收 YoY：" not in explain
+    assert "殖利率：" not in explain
+    assert "基本面：尚未整合" not in explain
+
+
 def test_fundamental_with_only_eps():
     explain = _explain(
         {

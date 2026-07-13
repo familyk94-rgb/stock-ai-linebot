@@ -14,10 +14,14 @@ REQUEST_TIMEOUT_SECONDS = 10
 
 
 class FundamentalService:
-    def get_fundamental(self, stock_id: str) -> dict:
+    def get_fundamental(self, stock_id: str, asset: dict | None = None) -> dict:
+        applicability = _asset_applicability(asset)
+        if applicability == "not_applicable":
+            return _unavailable_result(applicability)
+
         stock_id = str(stock_id or "").strip()
         if not stock_id:
-            return _unavailable_result()
+            return _unavailable_result(applicability)
 
         per_rows = self._fetch_dataset("TaiwanStockPER", stock_id, days=45)
         revenue_rows = self._fetch_dataset(
@@ -44,6 +48,7 @@ class FundamentalService:
             "dividend_yield": per_data["dividend_yield"],
         }
         result["available"] = any(value is not None for value in result.values())
+        result["applicability"] = applicability
         return result
 
     def _fetch_dataset(self, dataset: str, stock_id: str, days: int) -> list[dict]:
@@ -161,7 +166,17 @@ def _safe_int(value) -> int | None:
     return int(number) if number is not None else None
 
 
-def _unavailable_result() -> dict:
+def _asset_applicability(asset) -> str:
+    if not isinstance(asset, dict):
+        return "unknown"
+    if asset.get("type") == "etf":
+        return "not_applicable"
+    if asset.get("type") == "stock":
+        return "applicable"
+    return "unknown"
+
+
+def _unavailable_result(applicability: str = "unknown") -> dict:
     return {
         "eps": None,
         "pe": None,
@@ -170,4 +185,5 @@ def _unavailable_result() -> dict:
         "revenue_growth": None,
         "dividend_yield": None,
         "available": False,
+        "applicability": applicability,
     }

@@ -11,6 +11,7 @@ EXPECTED_KEYS = {
     "revenue_growth",
     "dividend_yield",
     "available",
+    "applicability",
 }
 
 
@@ -87,12 +88,49 @@ def test_parses_latest_per_pbr_dividend_revenue_and_eps(monkeypatch):
         "revenue_growth": 12.5,
         "dividend_yield": 3.2,
         "available": True,
+        "applicability": "unknown",
     }
     assert calls == [
         ("TaiwanStockPER", 10),
         ("TaiwanStockMonthRevenue", 10),
         ("TaiwanStockFinancialStatements", 10),
     ]
+
+
+def test_etf_skips_all_fundamental_http_and_token_access(monkeypatch):
+    monkeypatch.setattr(
+        "services.fundamental_service.requests.get",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("HTTP called")),
+    )
+    monkeypatch.setattr(
+        "services.fundamental_service.os.getenv",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("token read")),
+    )
+    result = FundamentalService().get_fundamental(
+        "0050",
+        asset={"type": "etf"},
+    )
+    assert result["applicability"] == "not_applicable"
+    assert result["available"] is False
+    assert all(result[key] is None for key in ("eps", "pe", "pb", "roe", "revenue_growth", "dividend_yield"))
+
+
+def test_stock_keeps_existing_fundamental_requests(monkeypatch):
+    calls = _mock_finmind(monkeypatch, {})
+    result = FundamentalService().get_fundamental("2330", asset={"type": "stock"})
+    assert result["applicability"] == "applicable"
+    assert [dataset for dataset, _ in calls] == [
+        "TaiwanStockPER",
+        "TaiwanStockMonthRevenue",
+        "TaiwanStockFinancialStatements",
+    ]
+
+
+def test_unknown_asset_keeps_conservative_query_flow(monkeypatch):
+    calls = _mock_finmind(monkeypatch, {})
+    result = FundamentalService().get_fundamental("2330", asset={"type": "unknown"})
+    assert result["applicability"] == "unknown"
+    assert len(calls) == 3
 
 
 def test_calculates_revenue_yoy_from_same_month_last_year(monkeypatch):
@@ -166,7 +204,11 @@ def test_invalid_numeric_values_become_none(monkeypatch):
 
     result = FundamentalService().get_fundamental("2330")
 
-    assert all(result[key] is None for key in EXPECTED_KEYS - {"available"})
+    assert all(
+        result[key] is None
+        for key in EXPECTED_KEYS - {"available", "applicability"}
+    )
+    assert result["applicability"] == "unknown"
     assert result["available"] is False
 
 

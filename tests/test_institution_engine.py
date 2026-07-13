@@ -178,7 +178,7 @@ def test_market_service_institution_failure_preserves_other_data(monkeypatch):
     )
     monkeypatch.setattr(market_service, "get_technical_indicators", lambda stock_id: {"trend": "多頭"})
     monkeypatch.setattr(market_service.GanzaiAI, "run", lambda self: {"score": 80})
-    monkeypatch.setattr(market_service.FundamentalEngine, "analyze", lambda self, stock_id: {"available": False})
+    monkeypatch.setattr(market_service.FundamentalEngine, "analyze", lambda self, stock_id, asset=None: {"available": False})
     monkeypatch.setattr(
         market_service.InstitutionEngine,
         "analyze",
