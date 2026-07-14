@@ -3,23 +3,33 @@ import math
 import os
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
-from datetime import date, timedelta
+from datetime import datetime, timedelta
 from time import perf_counter
+from zoneinfo import ZoneInfo
 
 import requests
 
 from app.config import FINMIND_API_TOKEN
 from core.observability import elapsed_ms, log_event
+from services.source_cache_service import CacheCopyError, get_or_load
 
 
 logger = logging.getLogger(__name__)
 FINMIND_API_URL = "https://api.finmindtrade.com/api/v4/data"
 REQUEST_TIMEOUT_SECONDS = 10
+FUNDAMENTAL_CACHE_TTL_SECONDS = 300
+FUNDAMENTAL_CACHE_SCHEMA_VERSION = "v1"
 DATASET_REQUESTS = (
     ("per", "TaiwanStockPER", 45),
     ("revenue", "TaiwanStockMonthRevenue", 450),
     ("statements", "TaiwanStockFinancialStatements", 550),
 )
+
+
+class _DatasetRows(list):
+    def __init__(self, rows, *, cacheable: bool):
+        super().__init__(rows)
+        self.cacheable = cacheable
 
 
 class FundamentalService:
@@ -88,13 +98,45 @@ class FundamentalService:
             return []
 
     def _fetch_dataset(self, dataset: str, stock_id: str, days: int) -> list[dict]:
+        start_date, end_date = _request_date_range(days)
+        key = (
+            "fundamental",
+            FUNDAMENTAL_CACHE_SCHEMA_VERSION,
+            dataset,
+            stock_id,
+            start_date,
+            end_date,
+        )
+        try:
+            result = get_or_load(
+                key=key,
+                ttl_seconds=FUNDAMENTAL_CACHE_TTL_SECONDS,
+                loader=lambda: self._fetch_dataset_uncached(
+                    dataset, stock_id, start_date, end_date
+                ),
+                is_cacheable=lambda rows: (
+                    isinstance(rows, _DatasetRows) and rows.cacheable
+                ),
+                service="fundamental",
+                dataset=dataset,
+            )
+        except CacheCopyError:
+            return []
+        return list(result.value) if isinstance(result.value, list) else []
+
+    def _fetch_dataset_uncached(
+        self,
+        dataset: str,
+        stock_id: str,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict]:
         started_at = _safe_profile_start()
-        end_date = date.today()
         params = {
             "dataset": dataset,
             "data_id": stock_id,
-            "start_date": (end_date - timedelta(days=days)).isoformat(),
-            "end_date": end_date.isoformat(),
+            "start_date": start_date,
+            "end_date": end_date,
         }
         token = (os.getenv("FINMIND_TOKEN") or FINMIND_API_TOKEN or "").strip()
         headers = {"Authorization": f"Bearer {token}"} if token else {}
@@ -131,7 +173,86 @@ class FundamentalService:
             _safe_request_event(dataset, result="fallback", started_at=started_at, error_type="InvalidData")
             return []
         _safe_request_event(dataset, result="success", started_at=started_at)
-        return [row for row in payload["data"] if isinstance(row, dict)]
+        raw_rows = payload["data"]
+        return _DatasetRows(
+            [row for row in raw_rows if isinstance(row, dict)],
+            cacheable=_cacheable_rows(dataset, raw_rows),
+        )
+
+
+def _request_date_range(days: int) -> tuple[str, str]:
+    end_date = _taipei_today()
+    return (end_date - timedelta(days=days)).isoformat(), end_date.isoformat()
+
+
+def _taipei_today():
+    return datetime.now(ZoneInfo("Asia/Taipei")).date()
+
+
+def _cacheable_rows(dataset: str, value) -> bool:
+    if not isinstance(value, list) or not value:
+        return False
+    validator = {
+        "TaiwanStockPER": _valid_per_row,
+        "TaiwanStockMonthRevenue": _valid_revenue_row,
+        "TaiwanStockFinancialStatements": _valid_statement_row,
+    }.get(dataset)
+    return validator is not None and all(validator(row) for row in value)
+
+
+def _valid_per_row(row) -> bool:
+    return (
+        isinstance(row, dict)
+        and _valid_date(row.get("date"))
+        and any(
+            _valid_cache_number(row.get(field))
+            for field in ("PER", "PBR", "dividend_yield")
+        )
+    )
+
+
+def _valid_revenue_row(row) -> bool:
+    if not isinstance(row, dict) or not _valid_date(row.get("date")):
+        return False
+    if _valid_cache_number(row.get("revenue_year_growth")):
+        return True
+    year_value = row.get("revenue_year")
+    month_value = row.get("revenue_month")
+    month = _safe_int(month_value)
+    return (
+        _valid_cache_number(row.get("revenue"))
+        and _valid_cache_integer(year_value)
+        and _valid_cache_integer(month_value)
+        and 1 <= month <= 12
+    )
+
+
+def _valid_statement_row(row) -> bool:
+    return (
+        isinstance(row, dict)
+        and _valid_date(row.get("date"))
+        and isinstance(row.get("type"), str)
+        and bool(row["type"].strip())
+        and _valid_cache_number(row.get("value"))
+    )
+
+
+def _valid_date(value) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+        return True
+    except ValueError:
+        return False
+
+
+def _valid_cache_number(value) -> bool:
+    return not isinstance(value, bool) and _safe_float(value) is not None
+
+
+def _valid_cache_integer(value) -> bool:
+    return not isinstance(value, bool) and _safe_int(value) is not None
 
 
 def _safe_profile_start():

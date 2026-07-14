@@ -44,6 +44,7 @@ EVENTS = frozenset(
         "news_analysis_end", "composite_analysis_end",
         "shopkeeper_analysis_end", "data_quality_analysis_end",
         "ai_cache_lookup_end",
+        "source_cache_lookup_end", "source_cache_store_end",
     }
 )
 

@@ -20,6 +20,54 @@ from services.fundamental_service import FundamentalService
 from core.market.fundamental_engine import FundamentalEngine
 
 
+def test_source_cache_events_are_registered():
+    assert {
+        "source_cache_lookup_end",
+        "source_cache_store_end",
+    }.issubset(observability.EVENTS)
+
+
+@pytest.mark.parametrize(
+    ("event", "result", "cache_status"),
+    [
+        ("source_cache_lookup_end", "cache_hit", "hit"),
+        ("source_cache_lookup_end", "cache_miss", "miss"),
+        ("source_cache_lookup_end", "cache_miss", "expired"),
+        ("source_cache_lookup_end", "cache_hit", "loader_wait"),
+        ("source_cache_store_end", "error", "store_error"),
+    ],
+)
+def test_source_cache_observability_contract(
+    caplog, event, result, cache_status
+):
+    logger = logging.getLogger("source-cache-contract")
+    token = observability.set_request_id("source-cache-request")
+    try:
+        with caplog.at_level(logging.INFO, logger="source-cache-contract"):
+            observability.log_event(
+                logger,
+                event,
+                result=result,
+                elapsed=3,
+                service="fundamental",
+                dataset="TaiwanStockPER",
+                cache_status=cache_status,
+                stock_id="2330",
+                token="SECRET",
+                response="BODY",
+            )
+    finally:
+        observability.clear_request_id(token)
+    assert f"event={event}" in caplog.text
+    assert f"result={result}" in caplog.text
+    assert f"cache_status={cache_status}" in caplog.text
+    assert "elapsed_ms=3" in caplog.text
+    assert "request_id=source-cache-request" in caplog.text
+    assert "2330" not in caplog.text
+    assert "SECRET" not in caplog.text
+    assert "BODY" not in caplog.text
+
+
 def _capture_events(monkeypatch, module):
     events = []
     monkeypatch.setattr(
