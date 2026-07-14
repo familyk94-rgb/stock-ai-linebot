@@ -629,6 +629,175 @@ def test_concurrent_fundamental_dataset_and_overall_events_are_exactly_once(
     assert "request_id=fundamental-overall" in overall_events[0]
 
 
+def test_parallel_market_sources_emit_one_stage_event_with_same_request_id(
+    monkeypatch,
+):
+    events = []
+
+    def capture(logger, event, **fields):
+        events.append((event, {**fields, "request_id": observability.get_request_id()}))
+
+    monkeypatch.setattr(market_service, "log_event", capture)
+    monkeypatch.setattr(market_service, "get_stock_name", lambda stock_id: "name")
+    monkeypatch.setattr(
+        market_service,
+        "_get_asset",
+        lambda service, stock_id: {
+            "type": "stock",
+            "source": "twse_company",
+            "confidence": "high",
+        },
+    )
+    monkeypatch.setattr(
+        market_service,
+        "get_stock_info",
+        lambda stock_id: {
+            "date": "2026-07-14",
+            "close": 100,
+            "open": 99,
+            "max": 101,
+            "min": 98,
+            "volume": 1000,
+        },
+    )
+
+    def technical(stock_id):
+        market_service._safe_profile_event(
+            "technical_analysis_end",
+            result="success",
+            started_at=None,
+            service="technical",
+        )
+        return {"trend": "up", "rsi": 55}
+
+    monkeypatch.setattr(market_service, "_get_technical_analysis", technical)
+    monkeypatch.setattr(
+        market_service.FundamentalEngine,
+        "analyze",
+        lambda self, stock_id, asset=None: {"available": True, "score": 70},
+    )
+    monkeypatch.setattr(
+        market_service.InstitutionEngine,
+        "analyze",
+        lambda self, stock_id: {"available": True, "score": 60},
+    )
+    monkeypatch.setattr(
+        market_service.NewsEngine,
+        "analyze",
+        lambda self, stock_id: {"available": True, "score": 50},
+    )
+    monkeypatch.setattr(
+        market_service.GanzaiAI,
+        "run",
+        lambda self: {"score": 80, "decision": "hold"},
+    )
+    monkeypatch.setattr(
+        market_service.CompositeAnalysisEngine,
+        "analyze",
+        lambda self, *args: {"available": True, "score": 65},
+    )
+    monkeypatch.setattr(
+        market_service.DataQualityEngine,
+        "analyze",
+        lambda self, data: {"status": "normal"},
+    )
+
+    token = observability.set_request_id("parallel-market")
+    try:
+        result = market_service.get_market_info("2330")
+    finally:
+        observability.clear_request_id(token)
+
+    assert result["price"] == 100
+    expected = {
+        "technical_analysis_end",
+        "fundamental_analysis_end",
+        "institution_analysis_end",
+        "news_analysis_end",
+        "ai_core_analysis_end",
+        "composite_analysis_end",
+        "shopkeeper_analysis_end",
+        "data_quality_analysis_end",
+        "market_service_end",
+    }
+    for event in expected:
+        matches = [fields for name, fields in events if name == event]
+        assert len(matches) == 1
+        assert matches[0]["elapsed"] >= 0
+        assert isinstance(matches[0]["elapsed"], int)
+        assert matches[0]["request_id"] == "parallel-market"
+    assert all(
+        not set(fields) & {
+            "stock_id", "user_id", "prompt", "response", "market_data",
+            "token", "secret", "url", "params",
+        }
+        for _, fields in events
+    )
+
+
+def test_real_technical_exception_keeps_one_event_and_market_flow(monkeypatch):
+    events = []
+
+    def capture(logger, event, **fields):
+        events.append((event, fields))
+
+    monkeypatch.setattr(market_service, "log_event", capture)
+    monkeypatch.setattr(technical_service, "log_event", capture)
+    monkeypatch.setattr(
+        technical_service,
+        "_calculate_technical_indicators",
+        lambda stock_id: (_ for _ in ()).throw(RuntimeError("technical failed")),
+    )
+    monkeypatch.setattr(market_service, "get_stock_name", lambda stock_id: "name")
+    monkeypatch.setattr(
+        market_service,
+        "_get_asset",
+        lambda service, stock_id: {"type": "stock", "source": None, "confidence": "low"},
+    )
+    monkeypatch.setattr(
+        market_service,
+        "get_stock_info",
+        lambda stock_id: {
+            "date": "2026-07-14", "close": 100, "open": 99,
+            "max": 101, "min": 98, "volume": 1000,
+        },
+    )
+    monkeypatch.setattr(
+        market_service.FundamentalEngine,
+        "analyze",
+        lambda self, stock_id, asset=None: {"available": False, "score": 0},
+    )
+    monkeypatch.setattr(
+        market_service.InstitutionEngine,
+        "analyze",
+        lambda self, stock_id: {"available": False, "score": 0},
+    )
+    monkeypatch.setattr(
+        market_service.NewsEngine,
+        "analyze",
+        lambda self, stock_id: {"available": False, "score": 0},
+    )
+    monkeypatch.setattr(
+        market_service.GanzaiAI,
+        "run",
+        lambda self: {"score": 50, "decision": "hold"},
+    )
+    monkeypatch.setattr(
+        market_service.DataQualityEngine,
+        "analyze",
+        lambda self, data: {"status": "partial"},
+    )
+
+    result = market_service.get_market_info("2330")
+    technical_events = [fields for event, fields in events if event == "technical_analysis_end"]
+    assert len(technical_events) == 1
+    assert technical_events[0]["result"] == "error"
+    assert technical_events[0]["error_type"] == "RuntimeError"
+    assert result["technical"] == {}
+    assert "financial" in result and "institution" in result and "news" in result
+    assert "core" in result and "composite" in result and "data_quality" in result
+
+
 @pytest.mark.parametrize(
     ("composite", "decision"),
     [

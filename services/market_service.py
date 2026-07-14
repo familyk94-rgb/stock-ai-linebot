@@ -1,4 +1,6 @@
 import logging
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from time import perf_counter
 
 from services.asset_service import AssetService, asset_fallback
@@ -20,6 +22,8 @@ from core.observability import elapsed_ms, log_event
 
 
 logger = logging.getLogger(__name__)
+
+SOURCE_TASK_ORDER = ("technical", "fundamental", "institution", "news")
 
 
 def format_number(value):
@@ -111,7 +115,14 @@ def _build_market_info(stock_id: str) -> dict:
         market_data["data_quality"] = _get_data_quality(data_quality_engine, market_data)
         return market_data
 
-    technical = get_technical_indicators(stock_id) or {}
+    source_results = _run_parallel_sources(
+        stock_id,
+        asset,
+        fundamental_engine,
+        institution_engine,
+        news_engine,
+    )
+    technical = source_results["technical"]
 
     stock_data = {
         "stock_id": stock_id,
@@ -144,16 +155,9 @@ def _build_market_info(stock_id: str) -> dict:
 
     stock_data["core"] = _get_ai_core_analysis(stock_data)
 
-    stock_data["financial"] = _get_fundamental_analysis(
-        fundamental_engine,
-        stock_id,
-        asset,
-    )
-    stock_data["institution"] = _get_institution_analysis(
-        institution_engine,
-        stock_id,
-    )
-    stock_data["news"] = _get_news_analysis(news_engine, stock_id)
+    stock_data["financial"] = source_results["fundamental"]
+    stock_data["institution"] = source_results["institution"]
+    stock_data["news"] = source_results["news"]
     stock_data["composite"] = _get_composite_analysis(
         composite_engine,
         {
@@ -168,6 +172,112 @@ def _build_market_info(stock_id: str) -> dict:
     stock_data["data_quality"] = _get_data_quality(data_quality_engine, stock_data)
 
     return stock_data
+
+
+def _run_parallel_sources(
+    stock_id: str,
+    asset: dict,
+    fundamental_engine: FundamentalEngine,
+    institution_engine: InstitutionEngine,
+    news_engine: NewsEngine,
+) -> dict[str, dict]:
+    task_specs = {
+        "technical": (
+            _get_technical_analysis,
+            (stock_id,),
+            lambda: {},
+            "technical_analysis_end",
+            "technical",
+        ),
+        "fundamental": (
+            _get_fundamental_analysis,
+            (fundamental_engine, stock_id, asset),
+            lambda: _fundamental_fallback(asset),
+            "fundamental_analysis_end",
+            "fundamental",
+        ),
+        "institution": (
+            _get_institution_analysis,
+            (institution_engine, stock_id),
+            _institution_fallback,
+            "institution_analysis_end",
+            "institution",
+        ),
+        "news": (
+            _get_news_analysis,
+            (news_engine, stock_id),
+            _news_fallback,
+            "news_analysis_end",
+            "news",
+        ),
+    }
+    results = {}
+    futures = {}
+    started_at = {}
+    executor = None
+
+    try:
+        executor = ThreadPoolExecutor(max_workers=4)
+    except Exception as error:
+        for key in SOURCE_TASK_ORDER:
+            _, _, fallback, event, service = task_specs[key]
+            results[key] = fallback()
+            _safe_profile_event(
+                event,
+                result="fallback",
+                started_at=None,
+                error_type=type(error).__name__,
+                service=service,
+            )
+        return results
+
+    try:
+        for key in SOURCE_TASK_ORDER:
+            worker, args, fallback, event, service = task_specs[key]
+            started_at[key] = _safe_profile_start()
+            try:
+                context = copy_context()
+                futures[key] = executor.submit(context.run, worker, *args)
+            except Exception as error:
+                results[key] = fallback()
+                _safe_profile_event(
+                    event,
+                    result="fallback",
+                    started_at=started_at[key],
+                    error_type=type(error).__name__,
+                    service=service,
+                )
+
+        for key in SOURCE_TASK_ORDER:
+            if key in results:
+                continue
+            _, _, fallback, event, service = task_specs[key]
+            try:
+                results[key] = futures[key].result()
+            except Exception as error:
+                results[key] = fallback()
+                _safe_profile_event(
+                    event,
+                    result="fallback",
+                    started_at=started_at[key],
+                    error_type=type(error).__name__,
+                    service=service,
+                )
+    finally:
+        try:
+            executor.shutdown(wait=True)
+        except Exception:
+            pass
+
+    return {key: results[key] for key in SOURCE_TASK_ORDER}
+
+
+def _get_technical_analysis(stock_id: str) -> dict:
+    try:
+        return get_technical_indicators(stock_id) or {}
+    except Exception:
+        # get_technical_indicators owns the single technical_analysis_end event.
+        return {}
 
 
 def _get_ai_core_analysis(stock_data: dict) -> dict:
