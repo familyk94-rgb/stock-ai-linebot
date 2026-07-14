@@ -1,3 +1,13 @@
+import logging
+
+
+def _configure_logging() -> None:
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger().setLevel(logging.INFO)
+
+
+_configure_logging()
+
 import os
 import tempfile
 from importlib import import_module

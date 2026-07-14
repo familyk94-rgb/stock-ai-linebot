@@ -1,4 +1,5 @@
 import asyncio
+import io
 import logging
 from datetime import datetime
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from app import webhook
+from app import main as app_main
 from core import observability
 from services import ai_service
 from services import asset_service, stock_name_service, stock_service, technical_service
@@ -25,6 +27,106 @@ def _capture_events(monkeypatch, module):
         lambda logger, event, **fields: events.append((event, fields)),
     )
     return events
+
+
+class _LoggerState:
+    def __init__(self, logger):
+        self.logger = logger
+        self.level = logger.level
+        self.handlers = list(logger.handlers)
+        self.propagate = logger.propagate
+        self.disabled = logger.disabled
+
+    def restore(self):
+        self.logger.handlers[:] = self.handlers
+        self.logger.setLevel(self.level)
+        self.logger.propagate = self.propagate
+        self.logger.disabled = self.disabled
+
+
+def test_application_startup_enables_root_info_logging():
+    root = logging.getLogger()
+    state = _LoggerState(root)
+    try:
+        root.setLevel(logging.WARNING)
+        app_main._configure_logging()
+        assert root.getEffectiveLevel() == logging.INFO
+    finally:
+        state.restore()
+
+
+def test_application_info_event_reaches_existing_root_handler_once():
+    root = logging.getLogger()
+    state = _LoggerState(root)
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    try:
+        root.handlers[:] = [handler]
+        root.setLevel(logging.WARNING)
+        app_main._configure_logging()
+        logger = logging.getLogger("services.production_logging_test")
+        observability.log_event(
+            logger,
+            "technical_analysis_end",
+            result="success",
+            elapsed=12,
+            stock_id="2330",
+            token="secret",
+        )
+        handler.flush()
+        output = stream.getvalue()
+        assert output.count("event=technical_analysis_end") == 1
+        assert "stock_id" not in output
+        assert "2330" not in output
+        assert "secret" not in output
+    finally:
+        state.restore()
+
+
+def test_logging_initialization_does_not_duplicate_existing_root_handler():
+    root = logging.getLogger()
+    state = _LoggerState(root)
+    handler = logging.StreamHandler(io.StringIO())
+    try:
+        root.handlers[:] = [handler]
+        app_main._configure_logging()
+        app_main._configure_logging()
+        assert root.handlers == [handler]
+    finally:
+        state.restore()
+
+
+def test_logging_initialization_adds_one_handler_when_root_has_none():
+    root = logging.getLogger()
+    state = _LoggerState(root)
+    try:
+        root.handlers[:] = []
+        app_main._configure_logging()
+        assert len(root.handlers) == 1
+        assert isinstance(root.handlers[0], logging.StreamHandler)
+    finally:
+        state.restore()
+
+
+def test_logging_initialization_preserves_uvicorn_loggers():
+    root = logging.getLogger()
+    root_state = _LoggerState(root)
+    access_state = _LoggerState(logging.getLogger("uvicorn.access"))
+    error_state = _LoggerState(logging.getLogger("uvicorn.error"))
+    before = {
+        "access": (access_state.level, access_state.handlers, access_state.propagate, access_state.disabled),
+        "error": (error_state.level, error_state.handlers, error_state.propagate, error_state.disabled),
+    }
+    try:
+        app_main._configure_logging()
+        access = logging.getLogger("uvicorn.access")
+        error = logging.getLogger("uvicorn.error")
+        assert (access.level, access.handlers, access.propagate, access.disabled) == before["access"]
+        assert (error.level, error.handlers, error.propagate, error.disabled) == before["error"]
+    finally:
+        root_state.restore()
+        access_state.restore()
+        error_state.restore()
 
 
 def test_request_id_is_generated_and_cleared():
