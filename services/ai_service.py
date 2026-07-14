@@ -43,21 +43,36 @@ FORBIDDEN_EXPLAIN_TERMS = (
 
 def ai_stock_analysis(stock):
     cache_key = f"ai_dashboard_v2_{stock['stock_id']}_{stock['date']}"
-    cached = get_cache(cache_key)
+    cache_started = perf_counter()
+    cache_elapsed = 0
+    cache_error = None
+    try:
+        cached = get_cache(cache_key)
+        cache_elapsed = elapsed_ms(cache_started)
+    except Exception as error:
+        cached = None
+        cache_elapsed = elapsed_ms(cache_started)
+        cache_error = error
 
     if isinstance(cached, dict):
-        log_event(logger, "ai_cache_hit", result="cache_hit", stock_id=stock.get("stock_id"), data_date=stock.get("date"))
+        log_event(logger, "ai_cache_hit", result="cache_hit")
         fallback = _limit_analysis_explain(build_analysis_sections(stock))
         if not _is_valid_cached_analysis(cached):
+            log_event(logger, "ai_cache_lookup_end", result="fallback", elapsed=cache_elapsed, error_type="InvalidCacheEntry", service="ai", cache_status="invalid")
             log_event(logger, "ai_analysis_end", result="fallback", error_type="InvalidCacheEntry")
             _track_usage(model=OPENAI_MODEL, result="fallback", cache_hit=False, openai_call=False)
             return fallback
+        log_event(logger, "ai_cache_lookup_end", result="cache_hit", elapsed=cache_elapsed, service="ai", cache_status="hit")
         analysis = _limit_analysis_explain(cached, fallback=fallback)
         log_event(logger, "ai_analysis_end", result="cache_hit")
         _track_usage(model=OPENAI_MODEL, result="success", cache_hit=True, openai_call=False)
         return analysis
 
-    log_event(logger, "ai_cache_miss", result="cache_miss", stock_id=stock.get("stock_id"), data_date=stock.get("date"))
+    if cache_error is not None:
+        log_event(logger, "ai_cache_lookup_end", result="error", elapsed=cache_elapsed, error_type=type(cache_error).__name__, service="ai", cache_status="error")
+    else:
+        log_event(logger, "ai_cache_lookup_end", result="cache_miss", elapsed=cache_elapsed, service="ai", cache_status="miss")
+    log_event(logger, "ai_cache_miss", result="cache_miss")
     fallback = _limit_analysis_explain(build_analysis_sections(stock))
     started_at = perf_counter()
     response = None

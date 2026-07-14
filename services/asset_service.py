@@ -46,24 +46,36 @@ class AssetService:
         self._now_provider = now_provider or (lambda: datetime.now(TAIPEI))
 
     def get_asset(self, stock_id: str) -> dict:
+        started_at = perf_counter()
+        try:
+            asset, result, cache_status = self._get_asset_profiled(stock_id)
+        except Exception as error:
+            log_event(logger, "asset_analysis_end", result="error", elapsed=elapsed_ms(started_at), error_type=type(error).__name__, service="asset")
+            raise
+        log_event(logger, "asset_analysis_end", result=result, elapsed=elapsed_ms(started_at), service="asset", cache_status=cache_status)
+        return asset
+
+    def _get_asset_profiled(self, stock_id: str):
         symbol = self._normalize_symbol(stock_id)
         if not symbol:
-            return asset_fallback()
+            return asset_fallback(), "fallback", "miss"
 
         cache = self._load_cache()
         now = self._safe_now()
         if now is None:
-            return self._asset_from_stale_cache(cache, symbol)
+            return self._asset_from_stale_cache(cache, symbol), "fallback", "stale"
 
         if self._cache_is_fresh(cache, now):
             log_event(logger, "asset_cache_hit", result="cache_hit")
-            return self._asset_from_cache(cache, symbol)
+            return self._asset_from_cache(cache, symbol), "cache_hit", "hit"
 
         log_event(logger, "asset_cache_miss", result="cache_miss")
         refreshed = self._refresh(cache, now)
         if refreshed is not None:
-            return self._asset_from_cache(refreshed, symbol)
-        return self._asset_from_stale_cache(cache, symbol)
+            statuses = (refreshed.get("sources") or {}).values()
+            result = "success" if statuses and all(item.get("status") == "ok" for item in statuses) else "fallback"
+            return self._asset_from_cache(refreshed, symbol), result, "miss"
+        return self._asset_from_stale_cache(cache, symbol), "fallback", "stale"
 
     @staticmethod
     def _normalize_symbol(stock_id):

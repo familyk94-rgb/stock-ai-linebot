@@ -18,6 +18,7 @@ _SENSITIVE_KEYS = {
     "user_id", "user_message", "news_content", "headers", "authorization",
     "finmind_token", "finmind_api_token", "openai_api_key",
     "line_channel_secret", "line_channel_access_token",
+    "stock_id", "stock_code",
 }
 VALID_RESULTS = frozenset(
     {"success", "fallback", "timeout", "error", "skipped", "cache_hit", "cache_miss"}
@@ -36,6 +37,13 @@ EVENTS = frozenset(
         "usage_record_success", "usage_record_error",
         "usage_summary_query_success", "usage_summary_query_error",
         "pricing_unknown", "usage_metadata_missing",
+        "stock_name_lookup_end", "asset_analysis_end",
+        "price_request_end", "price_history_request_end",
+        "technical_analysis_end", "ai_core_analysis_end",
+        "fundamental_analysis_end", "institution_analysis_end",
+        "news_analysis_end", "composite_analysis_end",
+        "shopkeeper_analysis_end", "data_quality_analysis_end",
+        "ai_cache_lookup_end",
     }
 )
 
@@ -79,9 +87,17 @@ def elapsed_ms(started_at: float) -> int:
         started = float(started_at)
         if not math.isfinite(started) or started < 0:
             return 0
-        value = (perf_counter() - started) * 1000
-        return max(0, round(value)) if math.isfinite(value) else 0
-    except (TypeError, ValueError, OverflowError):
+        ended_at = perf_counter()
+        if isinstance(ended_at, bool):
+            return 0
+        ended = float(ended_at)
+        if not math.isfinite(ended) or ended < started:
+            return 0
+        value = (ended - started) * 1000
+        if not math.isfinite(value):
+            return 0
+        return max(0, int(round(value)))
+    except Exception:
         return 0
 
 

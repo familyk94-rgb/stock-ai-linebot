@@ -77,7 +77,7 @@ def handle_text_message(event: MessageEvent):
 
     try:
         market_started = perf_counter()
-        log_event(logger, "market_analysis_start", result="success", stock_id=stock_code)
+        log_event(logger, "market_analysis_start", result="success")
         try:
             market_data = get_market_info(stock_code)
             if not isinstance(market_data, dict):
@@ -86,13 +86,13 @@ def handle_text_message(event: MessageEvent):
                 )
             market_result = "success" if market_data.get("price") is not None else "fallback"
         except TimeoutError as error:
-            log_event(logger, "market_analysis_end", result="timeout", elapsed=elapsed_ms(market_started), error_type=type(error).__name__, stock_id=stock_code)
+            log_event(logger, "market_analysis_end", result="timeout", elapsed=elapsed_ms(market_started), error_type=type(error).__name__)
             raise
         except Exception as error:
-            log_event(logger, "market_analysis_end", result="error", elapsed=elapsed_ms(market_started), error_type=type(error).__name__, stock_id=stock_code)
+            log_event(logger, "market_analysis_end", result="error", elapsed=elapsed_ms(market_started), error_type=type(error).__name__)
             raise
         else:
-            log_event(logger, "market_analysis_end", result=market_result, elapsed=elapsed_ms(market_started), stock_id=stock_code)
+            log_event(logger, "market_analysis_end", result=market_result, elapsed=elapsed_ms(market_started))
 
         log_event(logger, "market_data_loaded", result=market_result, stock_id=stock_code)
 
@@ -105,11 +105,11 @@ def handle_text_message(event: MessageEvent):
 
         try:
             ai_started = perf_counter()
-            log_event(logger, "ai_analysis_start", result="success", stock_id=stock_code)
+            log_event(logger, "ai_analysis_start", result="success")
             ai_result = ai_stock_analysis(market_data)
-            log_event(logger, "ai_analysis_end", result="success", elapsed=elapsed_ms(ai_started), stock_id=stock_code)
+            log_event(logger, "ai_analysis_end", result="success", elapsed=elapsed_ms(ai_started))
         except Exception as error:
-            log_event(logger, "ai_analysis_end", result="fallback", elapsed=elapsed_ms(ai_started), error_type=type(error).__name__, stock_id=stock_code)
+            log_event(logger, "ai_analysis_end", result="fallback", elapsed=elapsed_ms(ai_started), error_type=type(error).__name__)
             safe_reply_text(
                 event.reply_token,
                 "市場資料已取得，但 AI 分析服務暫時無法完成，請稍後再試。",
@@ -171,14 +171,14 @@ def handle_text_message(event: MessageEvent):
         }
 
         flex_started = perf_counter()
-        log_event(logger, "flex_build_start", result="success", stock_id=stock_code)
+        log_event(logger, "flex_build_start", result="success")
         try:
             flex_message = build_stock_dashboard_flex(flex_data)
         except Exception as error:
-            log_event(logger, "flex_build_end", result="error", elapsed=elapsed_ms(flex_started), error_type=type(error).__name__, stock_id=stock_code)
+            log_event(logger, "flex_build_end", result="error", elapsed=elapsed_ms(flex_started), error_type=type(error).__name__)
             raise
         else:
-            log_event(logger, "flex_build_end", result="success", elapsed=elapsed_ms(flex_started), stock_id=stock_code)
+            log_event(logger, "flex_build_end", result="success", elapsed=elapsed_ms(flex_started))
 
         reply_message(event.reply_token, flex_message)
 

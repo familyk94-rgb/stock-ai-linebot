@@ -39,19 +39,19 @@ def format_price(value):
 
 
 def get_market_info(stock_id: str) -> dict:
-    started_at = perf_counter()
+    started_at = _safe_profile_start()
     stock_id = str(stock_id).strip()
-    log_event(logger, "market_service_start", result="success", stock_id=stock_id)
+    _safe_event("market_service_start", result="success")
     try:
         market_data = _build_market_info(stock_id)
     except TimeoutError as error:
-        log_event(logger, "market_service_end", result="timeout", elapsed=elapsed_ms(started_at), error_type=type(error).__name__, stock_id=stock_id)
+        _safe_profile_event("market_service_end", result="timeout", started_at=started_at, error_type=type(error).__name__)
         raise
     except Exception as error:
-        log_event(logger, "market_service_end", result="error", elapsed=elapsed_ms(started_at), error_type=type(error).__name__, stock_id=stock_id)
+        _safe_profile_event("market_service_end", result="error", started_at=started_at, error_type=type(error).__name__)
         raise
     result = "success" if isinstance(market_data, dict) and market_data.get("price") is not None else "fallback"
-    log_event(logger, "market_service_end", result=result, elapsed=elapsed_ms(started_at), stock_id=stock_id)
+    _safe_profile_event("market_service_end", result=result, started_at=started_at)
     return market_data
 
 
@@ -142,14 +142,7 @@ def _build_market_info(stock_id: str) -> dict:
         "asset": asset,
     }
 
-    try:
-        ai = GanzaiAI(stock_data)
-        stock_data["core"] = ai.run() or {}
-    except Exception as error:
-        log_event(logger, "ai_core_end", result="fallback", error_type=type(error).__name__, stock_id=stock_id)
-        stock_data["core"] = {
-            "data_completeness": calculate_data_completeness(stock_data)
-        }
+    stock_data["core"] = _get_ai_core_analysis(stock_data)
 
     stock_data["financial"] = _get_fundamental_analysis(
         fundamental_engine,
@@ -177,16 +170,36 @@ def _build_market_info(stock_id: str) -> dict:
     return stock_data
 
 
+def _get_ai_core_analysis(stock_data: dict) -> dict:
+    started_at = _safe_profile_start()
+    try:
+        result = GanzaiAI(stock_data).run() or {}
+    except Exception as error:
+        _safe_profile_event("ai_core_analysis_end", result="fallback", started_at=started_at, error_type=type(error).__name__, service="ai_core")
+        return {"data_completeness": calculate_data_completeness(stock_data)}
+    _safe_profile_event("ai_core_analysis_end", result="success" if result else "fallback", started_at=started_at, service="ai_core")
+    return result
+
+
 def _get_fundamental_analysis(
     engine: FundamentalEngine,
     stock_id: str,
     asset: dict,
 ) -> dict:
+    started_at = _safe_profile_start()
     try:
-        return engine.analyze(stock_id, asset=asset)
+        result = engine.analyze(stock_id, asset=asset)
     except Exception as error:
-        log_event(logger, "service_fallback", result="fallback", error_type=type(error).__name__, service="fundamental")
-        return _fundamental_fallback(asset)
+        _safe_event("service_fallback", result="fallback", error_type=type(error).__name__, service="fundamental")
+        result = _fundamental_fallback(asset)
+        _safe_profile_event("fundamental_analysis_end", result="fallback", started_at=started_at, error_type=type(error).__name__, service="fundamental")
+        return result
+    if isinstance(result, dict) and result.get("applicability") == "not_applicable":
+        stage_result = "skipped"
+    else:
+        stage_result = "success" if isinstance(result, dict) and result.get("available") is True else "fallback"
+    _safe_profile_event("fundamental_analysis_end", result=stage_result, started_at=started_at, service="fundamental")
+    return result
 
 
 def _fundamental_fallback(asset: dict | None = None) -> dict:
@@ -207,11 +220,17 @@ def _fundamental_fallback(asset: dict | None = None) -> dict:
 
 
 def _get_institution_analysis(engine: InstitutionEngine, stock_id: str) -> dict:
+    started_at = _safe_profile_start()
     try:
-        return engine.analyze(stock_id)
+        result = engine.analyze(stock_id)
     except Exception as error:
-        log_event(logger, "service_fallback", result="fallback", error_type=type(error).__name__, service="institution")
-        return _institution_fallback()
+        _safe_event("service_fallback", result="fallback", error_type=type(error).__name__, service="institution")
+        result = _institution_fallback()
+        _safe_profile_event("institution_analysis_end", result="fallback", started_at=started_at, error_type=type(error).__name__, service="institution")
+        return result
+    stage_result = "success" if isinstance(result, dict) and result.get("available") is True else "fallback"
+    _safe_profile_event("institution_analysis_end", result=stage_result, started_at=started_at, service="institution")
+    return result
 
 
 def _institution_fallback() -> dict:
@@ -231,11 +250,17 @@ def _institution_fallback() -> dict:
 
 
 def _get_news_analysis(engine: NewsEngine, stock_id: str) -> dict:
+    started_at = _safe_profile_start()
     try:
-        return engine.analyze(stock_id)
+        result = engine.analyze(stock_id)
     except Exception as error:
-        log_event(logger, "service_fallback", result="fallback", error_type=type(error).__name__, service="news")
-        return _news_fallback()
+        _safe_event("service_fallback", result="fallback", error_type=type(error).__name__, service="news")
+        result = _news_fallback()
+        _safe_profile_event("news_analysis_end", result="fallback", started_at=started_at, error_type=type(error).__name__, service="news")
+        return result
+    stage_result = "success" if isinstance(result, dict) and result.get("available") is True else "fallback"
+    _safe_profile_event("news_analysis_end", result=stage_result, started_at=started_at, service="news")
+    return result
 
 
 def _news_fallback() -> dict:
@@ -259,38 +284,91 @@ def _get_composite_analysis(
     institution: dict,
     news: dict,
 ) -> dict:
+    started_at = _safe_profile_start()
     try:
-        return engine.analyze(technical, financial, institution, news)
+        result = engine.analyze(technical, financial, institution, news)
     except Exception as error:
-        log_event(logger, "service_fallback", result="fallback", error_type=type(error).__name__, service="composite")
-        return composite_fallback()
+        _safe_event("service_fallback", result="fallback", error_type=type(error).__name__, service="composite")
+        result = composite_fallback()
+        _safe_profile_event("composite_analysis_end", result="fallback", started_at=started_at, error_type=type(error).__name__, service="composite")
+        return result
+    stage_result = "success" if isinstance(result, dict) and result.get("available") is True else "fallback"
+    _safe_profile_event("composite_analysis_end", result=stage_result, started_at=started_at, service="composite")
+    return result
 
 
 def _update_shopkeeper_message(market_data: dict) -> None:
-    core = market_data.get("core")
-    if not isinstance(core, dict):
+    started_at = _safe_profile_start()
+    try:
+        core = market_data.get("core")
+        if not isinstance(core, dict):
+            _safe_profile_event("shopkeeper_analysis_end", result="skipped", started_at=started_at, service="shopkeeper")
+            return
+        current_message = core.get("shopkeeper_message")
+        updated_message = get_composite_aware_advice(
+            current_message,
+            core.get("decision"),
+            market_data.get("composite"),
+        )
+        if isinstance(current_message, str) and updated_message != current_message:
+            core["shopkeeper_message"] = updated_message
+            result = "success"
+        else:
+            result = "skipped"
+    except Exception as error:
+        _safe_profile_event(
+            "shopkeeper_analysis_end",
+            result="fallback",
+            started_at=started_at,
+            error_type=type(error).__name__,
+            service="shopkeeper",
+        )
         return
-    current_message = core.get("shopkeeper_message")
-    updated_message = get_composite_aware_advice(
-        current_message,
-        core.get("decision"),
-        market_data.get("composite"),
-    )
-    if isinstance(current_message, str) and updated_message != current_message:
-        core["shopkeeper_message"] = updated_message
+    _safe_profile_event("shopkeeper_analysis_end", result=result, started_at=started_at, service="shopkeeper")
+
+
+def _safe_profile_start():
+    try:
+        return perf_counter()
+    except Exception:
+        return None
+
+
+def _safe_profile_event(event: str, *, result: str, started_at=None, **fields) -> None:
+    try:
+        try:
+            elapsed = elapsed_ms(started_at)
+        except Exception:
+            elapsed = 0
+        log_event(logger, event, result=result, elapsed=elapsed, **fields)
+    except Exception:
+        return
+
+
+def _safe_event(event: str, *, result: str, **fields) -> None:
+    try:
+        log_event(logger, event, result=result, **fields)
+    except Exception:
+        return
 
 
 def _get_data_quality(engine: DataQualityEngine, market_data: dict) -> dict:
+    started_at = _safe_profile_start()
     try:
-        return engine.analyze(market_data)
+        result = engine.analyze(market_data)
     except Exception as error:
-        log_event(logger, "service_fallback", result="fallback", error_type=type(error).__name__, service="data_quality")
-        return data_quality_fallback()
+        _safe_event("service_fallback", result="fallback", error_type=type(error).__name__, service="data_quality")
+        result = data_quality_fallback()
+        _safe_profile_event("data_quality_analysis_end", result="fallback", started_at=started_at, error_type=type(error).__name__, service="data_quality")
+        return result
+    stage_result = "success" if isinstance(result, dict) and result.get("status") not in {None, "資料不足"} else "fallback"
+    _safe_profile_event("data_quality_analysis_end", result=stage_result, started_at=started_at, service="data_quality")
+    return result
 
 
 def _get_asset(service: AssetService, stock_id: str) -> dict:
     try:
         return service.get_asset(stock_id)
     except Exception as error:
-        log_event(logger, "service_fallback", result="fallback", error_type=type(error).__name__, service="asset")
+        _safe_event("service_fallback", result="fallback", error_type=type(error).__name__, service="asset")
         return asset_fallback()

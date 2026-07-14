@@ -1,5 +1,8 @@
 import asyncio
 import logging
+from datetime import datetime
+from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 import requests
@@ -9,8 +12,19 @@ from starlette.requests import Request
 from app import webhook
 from core import observability
 from services import ai_service
+from services import asset_service, stock_name_service, stock_service, technical_service
 from services import market_service
 from services.fundamental_service import FundamentalService
+
+
+def _capture_events(monkeypatch, module):
+    events = []
+    monkeypatch.setattr(
+        module,
+        "log_event",
+        lambda logger, event, **fields: events.append((event, fields)),
+    )
+    return events
 
 
 def test_request_id_is_generated_and_cleared():
@@ -229,6 +243,8 @@ def test_ai_cache_hit_and_miss_events(monkeypatch, caplog):
     with caplog.at_level(logging.INFO):
         assert ai_service.ai_stock_analysis(stock) == cached
     assert caplog.text.count("event=ai_cache_hit") == 1
+    assert caplog.text.count("event=ai_cache_lookup_end") == 1
+    assert "result=cache_hit" in caplog.text
     assert "event=ai_analysis_end" in caplog.text
     assert "result=cache_hit" in caplog.text
 
@@ -240,6 +256,7 @@ def test_ai_cache_hit_and_miss_events(monkeypatch, caplog):
     with caplog.at_level(logging.INFO):
         assert ai_service.ai_stock_analysis(stock) == cached
     assert caplog.text.count("event=ai_cache_miss") == 1
+    assert caplog.text.count("event=ai_cache_lookup_end") == 1
     assert "event=openai_analysis_end" in caplog.text
     assert "result=skipped" in caplog.text
 
@@ -280,6 +297,8 @@ def test_invalid_cache_falls_back_without_creating_client(monkeypatch, caplog):
         assert ai_service.ai_stock_analysis(stock) == fallback
     assert "result=fallback" in caplog.text
     assert "error_type=InvalidCacheEntry" in caplog.text
+    assert caplog.text.count("event=ai_cache_lookup_end") == 1
+    assert "cache_status=invalid" in caplog.text
 
 
 def test_client_initialization_failure_falls_back(monkeypatch, caplog):
@@ -314,6 +333,253 @@ def test_invalid_result_and_expanded_sensitive_fields_are_safe(caplog):
         )
     assert "result=error" in caplog.text
     assert all(f"SECRET_{letter}" not in caplog.text for letter in "ABCDEFG")
+
+
+def test_profiling_events_filter_stock_identifiers(caplog):
+    logger = logging.getLogger("profiling-privacy")
+    with caplog.at_level(logging.INFO, logger="profiling-privacy"):
+        observability.log_event(
+            logger, "price_request_end", result="success", elapsed=1,
+            stock_id="2330", stock_code="2330", service="price",
+        )
+    assert "2330" not in caplog.text
+    assert "elapsed_ms=1" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, "bad", True, float("nan"), float("inf"), -1, [], {}, object()],
+)
+def test_elapsed_ms_invalid_inputs_are_safe(value):
+    assert observability.elapsed_ms(value) == 0
+
+
+@pytest.mark.parametrize("ending", [float("nan"), float("inf"), "bad", None, True])
+def test_elapsed_ms_invalid_clock_values_are_safe(monkeypatch, ending):
+    monkeypatch.setattr(observability, "perf_counter", lambda: ending)
+    assert observability.elapsed_ms(1.0) == 0
+
+
+def test_elapsed_ms_clock_failure_and_clock_rollback_are_safe(monkeypatch):
+    monkeypatch.setattr(
+        observability,
+        "perf_counter",
+        lambda: (_ for _ in ()).throw(RuntimeError("clock failed")),
+    )
+    assert observability.elapsed_ms(1.0) == 0
+    monkeypatch.setattr(observability, "perf_counter", lambda: 1.0)
+    assert observability.elapsed_ms(2.0) == 0
+
+
+@pytest.mark.parametrize(
+    ("cache_valid", "download_result", "expected"),
+    [
+        (True, None, "cache_hit"),
+        (False, ({"2330": {"stock_name": "name"}}, "success"), "success"),
+        (False, ({}, "timeout"), "timeout"),
+    ],
+)
+def test_stock_name_lookup_profiling(monkeypatch, cache_valid, download_result, expected):
+    events = _capture_events(monkeypatch, stock_name_service)
+    monkeypatch.setattr(stock_name_service, "is_cache_valid", lambda: cache_valid)
+    monkeypatch.setattr(stock_name_service, "load_stock_names", lambda: {"2330": {"stock_name": "name"}})
+    if download_result is not None:
+        monkeypatch.setattr(stock_name_service, "_download_stock_names_with_result", lambda: download_result)
+    stock_name_service.get_stock_name("2330")
+    matches = [fields for event, fields in events if event == "stock_name_lookup_end"]
+    assert len(matches) == 1
+    assert matches[0]["result"] == expected
+    assert isinstance(matches[0]["elapsed"], int) and matches[0]["elapsed"] >= 0
+
+
+@pytest.mark.parametrize(("mode", "expected"), [("hit", "cache_hit"), ("refresh", "success"), ("partial", "fallback")])
+def test_asset_overall_profiling(monkeypatch, tmp_path, mode, expected):
+    events = _capture_events(monkeypatch, asset_service)
+    service = asset_service.AssetService(tmp_path / "asset.json")
+    now = datetime.now(ZoneInfo("Asia/Taipei"))
+    asset = {"type": "stock", "source": "twse_company", "confidence": "high"}
+    cache = {"assets": {"2330": asset}, "sources": {name: {"status": "ok"} for name in asset_service.SOURCE_NAMES}}
+    monkeypatch.setattr(service, "_load_cache", lambda: cache)
+    monkeypatch.setattr(service, "_safe_now", lambda: now)
+    monkeypatch.setattr(service, "_cache_is_fresh", lambda value, current: mode == "hit")
+    if mode != "hit":
+        refreshed = dict(cache)
+        refreshed["sources"] = {
+            name: {"status": "failed" if mode == "partial" and name == "twse_etf" else "ok"}
+            for name in asset_service.SOURCE_NAMES
+        }
+        monkeypatch.setattr(service, "_refresh", lambda old, current: refreshed)
+    assert service.get_asset("2330")["type"] == "stock"
+    matches = [fields for event, fields in events if event == "asset_analysis_end"]
+    assert len(matches) == 1
+    assert matches[0]["result"] == expected
+
+
+class _Response:
+    status_code = 200
+
+    def __init__(self, data):
+        self._data = data
+
+    def json(self):
+        return {"data": self._data}
+
+
+def test_price_and_history_profiling(monkeypatch):
+    events = _capture_events(monkeypatch, stock_service)
+    row = {"date": "2026-07-14", "close": 1, "open": 1, "max": 1, "min": 1, "Trading_Volume": 1}
+    monkeypatch.setattr(stock_service.requests, "get", lambda *args, **kwargs: _Response([row]))
+    assert stock_service.get_stock_info("2330")["close"] == 1
+    assert stock_service.get_stock_history("2330") == [row]
+    assert [event for event, _ in events].count("price_request_end") == 1
+    assert [event for event, _ in events].count("price_history_request_end") == 1
+    assert all(fields["result"] == "success" for _, fields in events)
+
+
+def test_price_timeout_and_history_fallback_profiling(monkeypatch):
+    events = _capture_events(monkeypatch, stock_service)
+    monkeypatch.setattr(stock_service.requests, "get", lambda *args, **kwargs: (_ for _ in ()).throw(requests.Timeout()))
+    assert stock_service.get_stock_info("2330") is None
+    assert next(fields for event, fields in events if event == "price_request_end")["result"] == "timeout"
+    events.clear()
+    monkeypatch.setattr(stock_service.requests, "get", lambda *args, **kwargs: _Response([]))
+    assert stock_service.get_stock_history("2330") == []
+    assert next(fields for event, fields in events if event == "price_history_request_end")["result"] == "fallback"
+
+
+@pytest.mark.parametrize(("value", "expected"), [({"rsi": 50}, "success"), (None, "fallback")])
+def test_technical_overall_profiling(monkeypatch, value, expected):
+    events = _capture_events(monkeypatch, technical_service)
+    monkeypatch.setattr(technical_service, "_calculate_technical_indicators", lambda stock_id: value)
+    assert technical_service.get_technical_indicators("2330") == value
+    matches = [fields for event, fields in events if event == "technical_analysis_end"]
+    assert len(matches) == 1
+    assert matches[0]["result"] == expected
+
+
+def test_market_engine_stage_profiling(monkeypatch):
+    events = _capture_events(monkeypatch, market_service)
+    assert market_service._get_fundamental_analysis(
+        SimpleNamespace(analyze=lambda *args, **kwargs: {"available": False, "applicability": "not_applicable"}),
+        "0050", {"type": "etf"},
+    )["applicability"] == "not_applicable"
+    market_service._get_institution_analysis(SimpleNamespace(analyze=lambda value: {"available": True}), "2330")
+    market_service._get_news_analysis(SimpleNamespace(analyze=lambda value: {"available": True}), "2330")
+    market_service._get_composite_analysis(SimpleNamespace(analyze=lambda *args: {"available": True}), {}, {}, {}, {})
+    market_service._get_data_quality(SimpleNamespace(analyze=lambda value: {"status": "正常"}), {})
+    data = {"core": {"shopkeeper_message": "old", "decision": "觀察"}, "composite": {"available": False}}
+    monkeypatch.setattr(market_service, "get_composite_aware_advice", lambda *args: "old")
+    market_service._update_shopkeeper_message(data)
+    expected = {
+        "fundamental_analysis_end": "skipped",
+        "institution_analysis_end": "success",
+        "news_analysis_end": "success",
+        "composite_analysis_end": "success",
+        "data_quality_analysis_end": "success",
+        "shopkeeper_analysis_end": "skipped",
+    }
+    for event, result in expected.items():
+        matches = [fields for name, fields in events if name == event]
+        assert len(matches) == 1
+        assert matches[0]["result"] == result
+
+
+@pytest.mark.parametrize(
+    ("composite", "decision"),
+    [
+        (None, "unsupported"),
+        ({"available": False}, "unsupported"),
+        ({"available": True, "score": 70, "summary": "ok", "coverage": 80}, "unsupported"),
+        ({"available": True, "score": float("nan"), "summary": "ok", "coverage": 80}, "偏多"),
+        ({"available": True, "score": 70, "summary": "ok", "coverage": float("inf")}, "偏多"),
+    ],
+)
+def test_shopkeeper_unchanged_paths_are_skipped_once(monkeypatch, composite, decision):
+    events = _capture_events(monkeypatch, market_service)
+    data = {"core": {"shopkeeper_message": "original", "decision": decision}, "composite": composite}
+    market_service._update_shopkeeper_message(data)
+    assert data["core"]["shopkeeper_message"] == "original"
+    matches = [fields for event, fields in events if event == "shopkeeper_analysis_end"]
+    assert len(matches) == 1
+    assert matches[0]["result"] == "skipped"
+
+
+def test_shopkeeper_update_is_success_once(monkeypatch):
+    events = _capture_events(monkeypatch, market_service)
+    data = {"core": {"shopkeeper_message": "original", "decision": "supported"}, "composite": {}}
+    monkeypatch.setattr(market_service, "get_composite_aware_advice", lambda *args: "updated")
+    market_service._update_shopkeeper_message(data)
+    assert data["core"]["shopkeeper_message"] == "updated"
+    matches = [fields for event, fields in events if event == "shopkeeper_analysis_end"]
+    assert len(matches) == 1
+    assert matches[0]["result"] == "success"
+    assert not set(matches[0]) & {"stock_id", "user_id", "prompt", "response", "market_data"}
+
+
+def test_shopkeeper_helper_failure_is_safe_fallback_once(monkeypatch):
+    events = _capture_events(monkeypatch, market_service)
+    data = {"core": {"shopkeeper_message": "original", "decision": "supported"}, "composite": {}}
+    monkeypatch.setattr(
+        market_service,
+        "get_composite_aware_advice",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("helper failed")),
+    )
+    market_service._update_shopkeeper_message(data)
+    assert data["core"]["shopkeeper_message"] == "original"
+    matches = [fields for event, fields in events if event == "shopkeeper_analysis_end"]
+    assert len(matches) == 1
+    assert matches[0]["result"] == "fallback"
+    assert matches[0]["error_type"] == "RuntimeError"
+
+
+def test_shopkeeper_timing_and_logging_failures_do_not_affect_update(monkeypatch):
+    data = {"core": {"shopkeeper_message": "original", "decision": "supported"}, "composite": {}}
+    monkeypatch.setattr(market_service, "perf_counter", lambda: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr(market_service, "elapsed_ms", lambda value: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr(market_service, "log_event", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr(market_service, "get_composite_aware_advice", lambda *args: "updated")
+    market_service._update_shopkeeper_message(data)
+    assert data["core"]["shopkeeper_message"] == "updated"
+
+
+def test_market_service_timing_and_logging_failures_do_not_affect_result(monkeypatch):
+    expected = {"price": 100, "core": {"score": 50}}
+    monkeypatch.setattr(market_service, "_build_market_info", lambda stock_id: expected)
+    monkeypatch.setattr(market_service, "perf_counter", lambda: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr(market_service, "elapsed_ms", lambda value: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr(market_service, "log_event", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError()))
+    assert market_service.get_market_info("2330") is expected
+
+
+@pytest.mark.parametrize(("raises", "expected"), [(False, "success"), (True, "fallback")])
+def test_ai_core_stage_profiling(monkeypatch, raises, expected):
+    events = _capture_events(monkeypatch, market_service)
+    if raises:
+        monkeypatch.setattr(market_service.GanzaiAI, "run", lambda self: (_ for _ in ()).throw(RuntimeError()))
+    else:
+        monkeypatch.setattr(market_service.GanzaiAI, "run", lambda self: {"score": 50})
+    result = market_service._get_ai_core_analysis({"price": 1})
+    assert isinstance(result, dict)
+    matches = [fields for event, fields in events if event == "ai_core_analysis_end"]
+    assert len(matches) == 1
+    assert matches[0]["result"] == expected
+
+
+def test_ai_cache_lookup_profiling_and_request_id(monkeypatch):
+    events = _capture_events(monkeypatch, ai_service)
+    token = observability.set_request_id("profile-request")
+    try:
+        monkeypatch.setattr(ai_service, "get_cache", lambda key: None)
+        monkeypatch.setattr(ai_service, "build_analysis_sections", lambda value: {"ai_summary": "s", "explain": "e"})
+        monkeypatch.setattr(ai_service, "_create_client", lambda: None)
+        monkeypatch.setattr(ai_service, "set_cache", lambda *args: None)
+        monkeypatch.setattr(ai_service, "_track_usage", lambda **kwargs: None)
+        ai_service.ai_stock_analysis({"stock_id": "2330", "date": "2026-07-14"})
+    finally:
+        observability.clear_request_id(token)
+    matches = [fields for event, fields in events if event == "ai_cache_lookup_end"]
+    assert len(matches) == 1
+    assert matches[0]["result"] == "cache_miss"
 
 
 def test_sensitive_fields_are_never_logged(caplog):

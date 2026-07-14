@@ -1,4 +1,6 @@
 import pandas as pd
+import logging
+from time import perf_counter
 
 from services.stock_service import get_stock_history
 from services.technical_indicators import (
@@ -7,9 +9,26 @@ from services.technical_indicators import (
     calculate_macd,
     calculate_kd,
 )
+from core.observability import elapsed_ms, log_event
+
+logger = logging.getLogger(__name__)
 
 
 def get_technical_indicators(stock_id: str):
+    started_at = perf_counter()
+    try:
+        result = _calculate_technical_indicators(stock_id)
+    except TimeoutError as error:
+        log_event(logger, "technical_analysis_end", result="timeout", elapsed=elapsed_ms(started_at), error_type=type(error).__name__, service="technical")
+        raise
+    except Exception as error:
+        log_event(logger, "technical_analysis_end", result="error", elapsed=elapsed_ms(started_at), error_type=type(error).__name__, service="technical")
+        raise
+    log_event(logger, "technical_analysis_end", result="success" if result else "fallback", elapsed=elapsed_ms(started_at), service="technical")
+    return result
+
+
+def _calculate_technical_indicators(stock_id: str):
     data = get_stock_history(stock_id, days=250)
 
     if not data:
