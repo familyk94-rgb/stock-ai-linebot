@@ -1,6 +1,8 @@
 import logging
 import math
 import os
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from datetime import date, timedelta
 from time import perf_counter
 
@@ -13,6 +15,11 @@ from core.observability import elapsed_ms, log_event
 logger = logging.getLogger(__name__)
 FINMIND_API_URL = "https://api.finmindtrade.com/api/v4/data"
 REQUEST_TIMEOUT_SECONDS = 10
+DATASET_REQUESTS = (
+    ("per", "TaiwanStockPER", 45),
+    ("revenue", "TaiwanStockMonthRevenue", 450),
+    ("statements", "TaiwanStockFinancialStatements", 550),
+)
 
 
 class FundamentalService:
@@ -25,17 +32,10 @@ class FundamentalService:
         if not stock_id:
             return _unavailable_result(applicability)
 
-        per_rows = self._fetch_dataset("TaiwanStockPER", stock_id, days=45)
-        revenue_rows = self._fetch_dataset(
-            "TaiwanStockMonthRevenue",
-            stock_id,
-            days=450,
-        )
-        statement_rows = self._fetch_dataset(
-            "TaiwanStockFinancialStatements",
-            stock_id,
-            days=550,
-        )
+        rows_by_key = self._fetch_datasets(stock_id)
+        per_rows = rows_by_key["per"]
+        revenue_rows = rows_by_key["revenue"]
+        statement_rows = rows_by_key["statements"]
 
         per_data = _parse_per(per_rows)
         revenue_growth = _parse_revenue_growth(revenue_rows)
@@ -53,8 +53,42 @@ class FundamentalService:
         result["applicability"] = applicability
         return result
 
+    def _fetch_datasets(self, stock_id: str) -> dict[str, list[dict]]:
+        futures = {}
+        with ThreadPoolExecutor(max_workers=len(DATASET_REQUESTS)) as executor:
+            for key, dataset, days in DATASET_REQUESTS:
+                context = copy_context()
+                futures[key] = executor.submit(
+                    context.run,
+                    self._run_dataset_task,
+                    dataset,
+                    stock_id,
+                    days,
+                )
+
+            rows_by_key = {}
+            for key, _, _ in DATASET_REQUESTS:
+                try:
+                    rows = futures[key].result()
+                except Exception:
+                    rows = []
+                rows_by_key[key] = rows if isinstance(rows, list) else []
+        return rows_by_key
+
+    def _run_dataset_task(self, dataset: str, stock_id: str, days: int) -> list[dict]:
+        try:
+            return self._fetch_dataset(dataset, stock_id, days)
+        except Exception as error:
+            _safe_request_event(
+                dataset,
+                result="error",
+                started_at=None,
+                error_type=type(error).__name__,
+            )
+            return []
+
     def _fetch_dataset(self, dataset: str, stock_id: str, days: int) -> list[dict]:
-        started_at = perf_counter()
+        started_at = _safe_profile_start()
         end_date = date.today()
         params = {
             "dataset": dataset,
@@ -76,20 +110,60 @@ class FundamentalService:
             payload = response.json()
         except (requests.Timeout, requests.RequestException, ValueError) as error:
             result = "timeout" if isinstance(error, requests.Timeout) else "fallback"
-            log_event(logger, "finmind_request_end", result=result, elapsed=elapsed_ms(started_at), error_type=type(error).__name__, service="fundamental", dataset=dataset)
+            _safe_request_event(dataset, result=result, started_at=started_at, error_type=type(error).__name__)
+            return []
+        except Exception as error:
+            _safe_request_event(
+                dataset,
+                result="error",
+                started_at=started_at,
+                error_type=type(error).__name__,
+            )
             return []
 
         if not isinstance(payload, dict):
-            log_event(logger, "finmind_request_end", result="fallback", elapsed=elapsed_ms(started_at), error_type="InvalidPayload", service="fundamental", dataset=dataset)
+            _safe_request_event(dataset, result="fallback", started_at=started_at, error_type="InvalidPayload")
             return []
         if payload.get("status") != 200:
-            log_event(logger, "finmind_request_end", result="fallback", elapsed=elapsed_ms(started_at), error_type="ApiStatus", service="fundamental", dataset=dataset)
+            _safe_request_event(dataset, result="fallback", started_at=started_at, error_type="ApiStatus")
             return []
         if not isinstance(payload.get("data"), list):
-            log_event(logger, "finmind_request_end", result="fallback", elapsed=elapsed_ms(started_at), error_type="InvalidData", service="fundamental", dataset=dataset)
+            _safe_request_event(dataset, result="fallback", started_at=started_at, error_type="InvalidData")
             return []
-        log_event(logger, "finmind_request_end", result="success", elapsed=elapsed_ms(started_at), service="fundamental", dataset=dataset)
+        _safe_request_event(dataset, result="success", started_at=started_at)
         return [row for row in payload["data"] if isinstance(row, dict)]
+
+
+def _safe_profile_start():
+    try:
+        return perf_counter()
+    except Exception:
+        return None
+
+
+def _safe_request_event(
+    dataset: str,
+    *,
+    result: str,
+    started_at,
+    error_type: str | None = None,
+) -> None:
+    try:
+        try:
+            elapsed = elapsed_ms(started_at)
+        except Exception:
+            elapsed = 0
+        log_event(
+            logger,
+            "finmind_request_end",
+            result=result,
+            elapsed=elapsed,
+            error_type=error_type,
+            service="fundamental",
+            dataset=dataset,
+        )
+    except Exception:
+        return
 
 
 def _parse_per(rows: list[dict]) -> dict:

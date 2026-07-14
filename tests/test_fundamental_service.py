@@ -1,5 +1,13 @@
+import logging
+import threading
+import time
+from collections import Counter
+
+import pytest
 import requests
 
+from core import observability
+from services import fundamental_service
 from services.fundamental_service import FundamentalService
 
 
@@ -90,11 +98,11 @@ def test_parses_latest_per_pbr_dividend_revenue_and_eps(monkeypatch):
         "available": True,
         "applicability": "unknown",
     }
-    assert calls == [
+    assert sorted(calls) == sorted([
         ("TaiwanStockPER", 10),
         ("TaiwanStockMonthRevenue", 10),
         ("TaiwanStockFinancialStatements", 10),
-    ]
+    ])
 
 
 def test_etf_skips_all_fundamental_http_and_token_access(monkeypatch):
@@ -119,11 +127,11 @@ def test_stock_keeps_existing_fundamental_requests(monkeypatch):
     calls = _mock_finmind(monkeypatch, {})
     result = FundamentalService().get_fundamental("2330", asset={"type": "stock"})
     assert result["applicability"] == "applicable"
-    assert [dataset for dataset, _ in calls] == [
+    assert sorted(dataset for dataset, _ in calls) == sorted([
         "TaiwanStockPER",
         "TaiwanStockMonthRevenue",
         "TaiwanStockFinancialStatements",
-    ]
+    ])
 
 
 def test_unknown_asset_keeps_conservative_query_flow(monkeypatch):
@@ -150,6 +158,12 @@ def test_calculates_revenue_yoy_from_same_month_last_year(monkeypatch):
 
 
 def test_one_dataset_timeout_does_not_discard_other_data(monkeypatch):
+    events = []
+    monkeypatch.setattr(
+        fundamental_service,
+        "log_event",
+        lambda logger, event, **fields: events.append((event, fields)),
+    )
     _mock_finmind(
         monkeypatch,
         {
@@ -169,6 +183,17 @@ def test_one_dataset_timeout_does_not_discard_other_data(monkeypatch):
     assert result["revenue_growth"] == 8.0
     assert result["eps"] == 3.0
     assert result["available"] is True
+    request_events = [fields for event, fields in events if event == "finmind_request_end"]
+    assert len(request_events) == 3
+    timeout_event = next(
+        fields
+        for fields in request_events
+        if fields["dataset"] == "TaiwanStockPER"
+    )
+    assert timeout_event["result"] == "timeout"
+    assert timeout_event["error_type"] == "Timeout"
+    assert isinstance(timeout_event["elapsed"], int)
+    assert timeout_event["elapsed"] >= 0
 
 
 def test_http_exceptions_do_not_escape(monkeypatch):
@@ -331,3 +356,230 @@ def test_missing_eps_and_non_eps_types_are_ignored(monkeypatch):
     )
 
     assert FundamentalService().get_fundamental("2330")["eps"] is None
+
+
+def test_three_datasets_overlap_and_are_called_exactly_once(monkeypatch):
+    barrier = threading.Barrier(3)
+    lock = threading.Lock()
+    active = 0
+    maximum_active = 0
+    calls = []
+
+    def fake_get(url, params, headers, timeout):
+        nonlocal active, maximum_active
+        with lock:
+            calls.append(params["dataset"])
+            active += 1
+            maximum_active = max(maximum_active, active)
+        try:
+            barrier.wait(timeout=1)
+            time.sleep(0.02)
+            return FakeResponse([])
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(fundamental_service.requests, "get", fake_get)
+    FundamentalService().get_fundamental("2330")
+
+    assert maximum_active == 3
+    assert Counter(calls) == Counter(
+        {
+            "TaiwanStockPER": 1,
+            "TaiwanStockMonthRevenue": 1,
+            "TaiwanStockFinancialStatements": 1,
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "delays",
+    [
+        {"TaiwanStockPER": 0.01, "TaiwanStockMonthRevenue": 0.02, "TaiwanStockFinancialStatements": 0.03},
+        {"TaiwanStockFinancialStatements": 0.01, "TaiwanStockPER": 0.02, "TaiwanStockMonthRevenue": 0.03},
+        {"TaiwanStockMonthRevenue": 0.01, "TaiwanStockFinancialStatements": 0.02, "TaiwanStockPER": 0.03},
+    ],
+)
+def test_completion_order_does_not_change_output(monkeypatch, delays):
+    rows = {
+        "TaiwanStockPER": [
+            {"date": "2026-01-02", "PER": "18", "PBR": "2.5", "dividend_yield": "3.2"},
+        ],
+        "TaiwanStockMonthRevenue": [
+            {"date": "2026-05-01", "revenue_year_growth": "12.5"},
+        ],
+        "TaiwanStockFinancialStatements": [
+            {"date": "2026-03-31", "type": "EPS", "value": "5.25"},
+        ],
+    }
+
+    def fake_get(url, params, headers, timeout):
+        dataset = params["dataset"]
+        time.sleep(delays[dataset])
+        return FakeResponse(rows[dataset])
+
+    monkeypatch.setattr(fundamental_service.requests, "get", fake_get)
+    assert FundamentalService().get_fundamental("2330") == {
+        "eps": 5.25,
+        "pe": 18.0,
+        "pb": 2.5,
+        "roe": None,
+        "revenue_growth": 12.5,
+        "dividend_yield": 3.2,
+        "available": True,
+        "applicability": "unknown",
+    }
+
+
+@pytest.mark.parametrize(
+    ("failed_dataset", "missing_key"),
+    [
+        ("TaiwanStockPER", "pe"),
+        ("TaiwanStockMonthRevenue", "revenue_growth"),
+        ("TaiwanStockFinancialStatements", "eps"),
+    ],
+)
+def test_each_dataset_failure_preserves_other_results(monkeypatch, failed_dataset, missing_key):
+    datasets = {
+        "TaiwanStockPER": [{"date": "2026-01-02", "PER": 18}],
+        "TaiwanStockMonthRevenue": [{"date": "2026-05-01", "revenue_year_growth": 12}],
+        "TaiwanStockFinancialStatements": [{"date": "2026-03-31", "type": "EPS", "value": 5}],
+    }
+    datasets[failed_dataset] = requests.ConnectionError("offline")
+    calls = _mock_finmind(monkeypatch, datasets)
+
+    result = FundamentalService().get_fundamental("2330")
+
+    assert result[missing_key] is None
+    for key in {"pe", "revenue_growth", "eps"} - {missing_key}:
+        assert result[key] is not None
+    assert result["available"] is True
+    assert Counter(dataset for dataset, _ in calls) == Counter(
+        dataset for _, dataset, _ in fundamental_service.DATASET_REQUESTS
+    )
+
+
+def test_unexpected_worker_exception_is_isolated(monkeypatch):
+    service = FundamentalService()
+    original = service._fetch_dataset
+    events = []
+    monkeypatch.setattr(
+        fundamental_service,
+        "log_event",
+        lambda logger, event, **fields: events.append((event, fields)),
+    )
+
+    def unexpected(dataset, stock_id, days):
+        if dataset == "TaiwanStockMonthRevenue":
+            raise RuntimeError("worker failed")
+        return original(dataset, stock_id, days)
+
+    monkeypatch.setattr(service, "_fetch_dataset", unexpected)
+    _mock_finmind(
+        monkeypatch,
+        {
+            "TaiwanStockPER": [{"date": "2026-01-02", "PER": 18}],
+            "TaiwanStockFinancialStatements": [
+                {"date": "2026-03-31", "type": "EPS", "value": 5},
+            ],
+        },
+    )
+
+    result = service.get_fundamental("2330")
+
+    assert result["pe"] == 18
+    assert result["revenue_growth"] is None
+    assert result["eps"] == 5
+    assert result["available"] is True
+    request_events = [fields for event, fields in events if event == "finmind_request_end"]
+    assert len(request_events) == 3
+    failed_event = next(
+        fields
+        for fields in request_events
+        if fields["dataset"] == "TaiwanStockMonthRevenue"
+    )
+    assert failed_event["result"] == "error"
+    assert failed_event["error_type"] == "RuntimeError"
+    assert not set(failed_event) & {
+        "stock_id", "user_id", "prompt", "response", "market_data",
+        "token", "secret", "url", "params",
+    }
+
+
+def test_each_worker_uses_an_independent_context_copy(monkeypatch):
+    copies = []
+
+    class ContextCopy:
+        def __init__(self):
+            self.used = False
+
+        def run(self, function, *args):
+            assert self.used is False
+            self.used = True
+            return function(*args)
+
+    def fake_copy_context():
+        context = ContextCopy()
+        copies.append(context)
+        return context
+
+    monkeypatch.setattr(fundamental_service, "copy_context", fake_copy_context)
+    _mock_finmind(monkeypatch, {})
+    FundamentalService().get_fundamental("2330")
+
+    assert len(copies) == 3
+    assert len({id(context) for context in copies}) == 3
+    assert all(context.used for context in copies)
+
+
+def test_worker_events_keep_request_id_and_are_emitted_once(monkeypatch, caplog):
+    _mock_finmind(monkeypatch, {})
+    token = observability.set_request_id("fundamental-concurrency")
+    try:
+        with caplog.at_level(logging.INFO):
+            FundamentalService().get_fundamental("2330")
+    finally:
+        observability.clear_request_id(token)
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if "event=finmind_request_end" in record.getMessage()
+        and "service=fundamental" in record.getMessage()
+    ]
+    assert len(messages) == 3
+    for _, dataset, _ in fundamental_service.DATASET_REQUESTS:
+        matching = [message for message in messages if f"dataset={dataset}" in message]
+        assert len(matching) == 1
+        assert "request_id=fundamental-concurrency" in matching[0]
+        assert "elapsed_ms=" in matching[0]
+
+
+def test_logging_and_elapsed_failures_do_not_change_result(monkeypatch):
+    _mock_finmind(
+        monkeypatch,
+        {
+            "TaiwanStockPER": [{"date": "2026-01-02", "PER": 18}],
+            "TaiwanStockMonthRevenue": [{"date": "2026-05-01", "revenue_year_growth": 12}],
+            "TaiwanStockFinancialStatements": [
+                {"date": "2026-03-31", "type": "EPS", "value": 5},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        fundamental_service,
+        "elapsed_ms",
+        lambda value: (_ for _ in ()).throw(RuntimeError("elapsed failed")),
+    )
+    monkeypatch.setattr(
+        fundamental_service,
+        "log_event",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("logging failed")),
+    )
+
+    result = FundamentalService().get_fundamental("2330")
+
+    assert result["pe"] == 18
+    assert result["revenue_growth"] == 12
+    assert result["eps"] == 5
+    assert result["available"] is True

@@ -17,6 +17,7 @@ from services import ai_service
 from services import asset_service, stock_name_service, stock_service, technical_service
 from services import market_service
 from services.fundamental_service import FundamentalService
+from core.market.fundamental_engine import FundamentalEngine
 
 
 def _capture_events(monkeypatch, module):
@@ -584,6 +585,48 @@ def test_market_engine_stage_profiling(monkeypatch):
         matches = [fields for name, fields in events if name == event]
         assert len(matches) == 1
         assert matches[0]["result"] == result
+
+
+def test_concurrent_fundamental_dataset_and_overall_events_are_exactly_once(
+    monkeypatch,
+    caplog,
+):
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"status": 200, "data": []}
+
+    monkeypatch.setattr(
+        "services.fundamental_service.requests.get",
+        lambda *args, **kwargs: Response(),
+    )
+    token = observability.set_request_id("fundamental-overall")
+    try:
+        with caplog.at_level(logging.INFO):
+            market_service._get_fundamental_analysis(
+                FundamentalEngine(),
+                "2330",
+                {"type": "stock"},
+            )
+    finally:
+        observability.clear_request_id(token)
+
+    messages = [record.getMessage() for record in caplog.records]
+    dataset_events = [
+        message
+        for message in messages
+        if "event=finmind_request_end" in message
+        and "service=fundamental" in message
+    ]
+    overall_events = [
+        message for message in messages if "event=fundamental_analysis_end" in message
+    ]
+    assert len(dataset_events) == 3
+    assert len(overall_events) == 1
+    assert all("request_id=fundamental-overall" in message for message in dataset_events)
+    assert "request_id=fundamental-overall" in overall_events[0]
 
 
 @pytest.mark.parametrize(
