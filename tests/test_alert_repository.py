@@ -87,6 +87,17 @@ def test_enable_disable_and_enabled_stock_query(tmp_path):
     assert [item["id"] for item in repository.get_enabled_alerts("2330")] == [alert_id]
 
 
+def test_list_enabled_stock_ids_is_distinct_sorted_and_excludes_disabled(tmp_path):
+    repository = AlertRepository(tmp_path / "alerts.db")
+    assert _add(repository, user="user-1", stock="2454")
+    assert _add(repository, user="user-2", stock="2330")
+    assert _add(repository, user="user-3", stock="2454", condition="LT")
+    disabled_id = _add(repository, user="user-4", stock="2317")["id"]
+    assert repository.disable_alert(disabled_id, "user-4")
+
+    assert repository.list_enabled_stock_ids() == ["2330", "2454"]
+
+
 def test_set_active_state_preserves_last_trigger_when_reset(tmp_path):
     repository = AlertRepository(tmp_path / "alerts.db")
     alert_id = _add(repository)["id"]

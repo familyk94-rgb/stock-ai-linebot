@@ -151,6 +151,17 @@ class AlertRepository:
         finally:
             connection.close()
 
+    def list_enabled_stock_ids(self) -> list[str]:
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                "SELECT DISTINCT stock_id FROM alerts "
+                "WHERE enabled = 1 ORDER BY stock_id"
+            ).fetchall()
+            return [row["stock_id"] for row in rows]
+        finally:
+            connection.close()
+
     def enable_alert(self, alert_id: int, line_user_id: str | None = None) -> bool:
         return self._set_enabled(alert_id, True, line_user_id)
 
