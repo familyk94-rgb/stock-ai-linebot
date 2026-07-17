@@ -23,12 +23,12 @@ class NeoQuoteProvider:
                 readiness = self._manager.readiness()
                 return _failure(readiness.get("reason") or "login_failed")
             response = _request_quote(client, symbol)
-            if _field(response, "success") is not True:
-                return _failure("quote_failed")
-            payload = _field(response, "data")
+            payload = _quote_payload(response)
             if payload is None:
-                return _failure("empty_payload")
+                return _failure("api_error")
             return adapt_quote(payload, expected_symbol=symbol)
+        except TimeoutError:
+            return _failure("timeout")
         except Exception:
             return _failure("quote_failed")
 
@@ -43,6 +43,16 @@ def _field(value: Any, name: str) -> Any:
     return getattr(value, name, None)
 
 
+def _quote_payload(response: Any) -> Any | None:
+    if isinstance(response, Mapping):
+        nested = response.get("data")
+        if isinstance(nested, Mapping):
+            return nested if response.get("success") is True else None
+        return response
+    nested = _field(response, "data")
+    return nested if _field(response, "success") is True and nested is not None else None
+
+
 def _failure(reason: Any) -> AdapterResult:
     safe_reasons = {
         "disabled",
@@ -51,6 +61,8 @@ def _failure(reason: Any) -> AdapterResult:
         "login_failed",
         "no_stock_account",
         "quote_failed",
+        "api_error",
+        "timeout",
         "empty_payload",
         "missing_price",
         "invalid_timestamp",

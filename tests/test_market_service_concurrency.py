@@ -375,6 +375,7 @@ def _independent_sequential_reference(stock_id):
         "stock_id": stock_id,
         "stock_code": stock_id,
         "stock_name": stock_name,
+        "provider": "finmind",
         "date": stock.get("date", "-"),
         "price": stock.get("close"),
         "open": stock.get("open"),

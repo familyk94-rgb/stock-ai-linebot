@@ -16,7 +16,8 @@ from services.providers.neo_quote_provider import NeoQuoteProvider
 
 
 logger = logging.getLogger(__name__)
-_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+DEFAULT_MARKET_PROVIDER = "fubon_neo"
+_SUPPORTED_PROVIDERS = frozenset({"fubon_neo", "finmind"})
 
 
 class QuoteProviderFactory:
@@ -33,8 +34,8 @@ class QuoteProviderFactory:
 
     def create(self) -> QuoteProvider:
         fallback = FinMindQuoteProvider(self._finmind_loader)
-        enabled = _enabled(self._environ.get("FUBON_NEO_ENABLED"))
-        primary = NeoQuoteProvider(self._manager) if enabled else None
+        selected = _provider_name(self._environ.get("MARKET_PROVIDER"))
+        primary = NeoQuoteProvider(self._manager) if selected == "fubon_neo" else None
         return RoutedQuoteProvider(primary=primary, fallback=fallback)
 
 
@@ -66,8 +67,11 @@ def _safe_get(provider: QuoteProvider, symbol: str) -> AdapterResult:
         return AdapterResult(False, None, "quote_failed")
 
 
-def _enabled(value: Any) -> bool:
-    return isinstance(value, str) and value.strip().casefold() in _TRUE_VALUES
+def _provider_name(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return DEFAULT_MARKET_PROVIDER
+    normalized = value.strip().casefold()
+    return normalized if normalized in _SUPPORTED_PROVIDERS else DEFAULT_MARKET_PROVIDER
 
 
 def _safe_event(result: str, provider_used: str, fallback_reason: str | None) -> None:

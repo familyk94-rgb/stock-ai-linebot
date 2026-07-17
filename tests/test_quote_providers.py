@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 
 import pytest
+from pathlib import Path
+import json
 
 from services import market_service
 from services.providers.base import QuoteProvider
@@ -70,6 +72,14 @@ def test_neo_provider_success_unwraps_success_error_data_contract():
     assert result.quote.price == 100
 
 
+def test_neo_provider_accepts_verified_flat_production_response():
+    path = Path(__file__).parent / "fixtures" / "fubon_neo" / "production_quote_sample.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    result = NeoQuoteProvider(Manager(_sdk(payload))).get_quote("2330")
+    assert result.ok is True
+    assert result.quote.provider == "fubon_neo"
+
+
 @pytest.mark.parametrize(
     ("manager", "reason"),
     [
@@ -99,9 +109,24 @@ def test_neo_adapter_failures_remain_safe(data, reason):
 def test_neo_quote_failure_does_not_expose_error_or_payload():
     response = {"success": False, "error": "SECRET", "data": {"secret": "VALUE"}}
     result = NeoQuoteProvider(Manager(_sdk(response))).get_quote("2330")
-    assert result == AdapterResult(False, None, "quote_failed")
+    assert result == AdapterResult(False, None, "api_error")
     assert "SECRET" not in repr(result)
     assert "VALUE" not in repr(result)
+
+
+def test_neo_timeout_and_exception_are_safe():
+    class TimeoutSDK:
+        @property
+        def marketdata(self):
+            raise TimeoutError("PRIVATE")
+
+    class ErrorSDK:
+        @property
+        def marketdata(self):
+            raise RuntimeError("PRIVATE")
+
+    assert NeoQuoteProvider(Manager(TimeoutSDK())).get_quote("2330").reason == "timeout"
+    assert NeoQuoteProvider(Manager(ErrorSDK())).get_quote("2330").reason == "quote_failed"
 
 
 def test_finmind_provider_returns_quote_contract():
@@ -121,10 +146,10 @@ def test_finmind_failure_is_safe():
     assert "SECRET" not in repr(result)
 
 
-def test_factory_disabled_uses_finmind_without_manager():
+def test_factory_finmind_selection_uses_finmind_without_manager():
     calls = []
     provider = QuoteProviderFactory(
-        environ={"FUBON_NEO_ENABLED": "false"},
+        environ={"MARKET_PROVIDER": "finmind"},
         manager=SimpleNamespace(get_client=lambda: calls.append("neo")),
         finmind_loader=lambda symbol: _finmind_stock(),
     ).create()
@@ -137,11 +162,24 @@ def test_factory_neo_success_does_not_call_finmind():
     calls = []
     manager = Manager(_sdk({"success": True, "error": None, "data": _payload()}))
     provider = QuoteProviderFactory(
-        environ={"FUBON_NEO_ENABLED": "true"},
+        environ={"MARKET_PROVIDER": "fubon_neo"},
         manager=manager,
         finmind_loader=lambda symbol: calls.append(symbol),
     ).create()
     assert provider.get_quote("2330").quote.provider == "fubon_neo"
+    assert calls == []
+
+
+def test_factory_defaults_to_fubon_neo():
+    calls = []
+    manager = Manager(_sdk({"success": True, "error": None, "data": _payload()}))
+    provider = QuoteProviderFactory(
+        environ={},
+        manager=manager,
+        finmind_loader=lambda symbol: calls.append(symbol),
+    ).create()
+    result = provider.get_quote("2330")
+    assert result.quote.provider == "fubon_neo"
     assert calls == []
 
 
@@ -153,6 +191,9 @@ def test_factory_neo_success_does_not_call_finmind():
         AdapterResult(False, None, "invalid_timestamp"),
         AdapterResult(False, None, "conflicting_fields"),
         AdapterResult(False, None, "unsupported_schema"),
+        AdapterResult(False, None, "timeout"),
+        AdapterResult(False, None, "api_error"),
+        AdapterResult(False, None, "quote_failed"),
     ],
 )
 def test_routing_falls_back_to_finmind(monkeypatch, neo_result):
@@ -165,7 +206,7 @@ def test_routing_falls_back_to_finmind(monkeypatch, neo_result):
         lambda manager: Neo(),
     )
     provider = QuoteProviderFactory(
-        environ={"FUBON_NEO_ENABLED": "true"},
+        environ={"MARKET_PROVIDER": "fubon_neo"},
         manager=object(),
         finmind_loader=lambda symbol: _finmind_stock(),
     ).create()
@@ -181,7 +222,7 @@ def test_provider_event_contains_provider_and_safe_fallback_reason(monkeypatch):
         lambda logger, event, **fields: events.append((event, fields)),
     )
     provider = QuoteProviderFactory(
-        environ={"FUBON_NEO_ENABLED": "false"},
+        environ={"MARKET_PROVIDER": "finmind"},
         finmind_loader=lambda symbol: _finmind_stock(),
     ).create()
     provider.get_quote("2330")
@@ -192,9 +233,10 @@ def test_provider_event_contains_provider_and_safe_fallback_reason(monkeypatch):
     assert "2330" not in repr(events)
 
 
-def test_market_service_uses_quote_provider_without_changing_output(monkeypatch):
+@pytest.mark.parametrize("provider_name", ["fubon_neo", "finmind"])
+def test_market_service_returns_provider_without_changing_output(monkeypatch, provider_name):
     quote = Quote(
-        "fubon_neo", "2330", "TWSE", None, "trading", 100, 99, 1,
+        provider_name, "2330", "TWSE", None, "trading", 100, 99, 1,
         1.01, 99, 101, 98, 1000, True, "realtime",
     )
 
@@ -224,6 +266,7 @@ def test_market_service_uses_quote_provider_without_changing_output(monkeypatch)
     assert result["change"] == 1
     assert result["change_percent"] == 1.01
     assert result["volume"] == 1000
+    assert result["provider"] == provider_name
 
 
 def test_market_service_provider_failure_preserves_no_price_fallback(monkeypatch):
@@ -245,4 +288,5 @@ def test_market_service_provider_failure_preserves_no_price_fallback(monkeypatch
     monkeypatch.setattr(market_service, "_get_data_quality", lambda *a: {})
     result = market_service.get_market_info("2330")
     assert result["price"] is None
+    assert result["provider"] is None
     assert result["technical"] == {}

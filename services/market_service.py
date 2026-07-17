@@ -74,6 +74,11 @@ def _build_market_info(stock_id: str) -> dict:
     quote_provider = QuoteProviderFactory(finmind_loader=get_stock_info).create()
     quote_result = quote_provider.get_quote(stock_id)
     stock = _quote_to_stock(quote_result.quote) if quote_result.ok else None
+    provider_used = (
+        quote_result.quote.provider
+        if quote_result.ok and quote_result.quote is not None
+        else None
+    )
 
     if not stock:
         financial = _get_fundamental_analysis(fundamental_engine, stock_id, asset)
@@ -90,6 +95,7 @@ def _build_market_info(stock_id: str) -> dict:
             "stock_id": stock_id,
             "stock_code": stock_id,
             "stock_name": stock_name,
+            "provider": provider_used,
             "date": "-",
             "price": None,
             "open": None,
@@ -131,6 +137,7 @@ def _build_market_info(stock_id: str) -> dict:
         "stock_id": stock_id,
         "stock_code": stock_id,
         "stock_name": stock_name,
+        "provider": provider_used,
         "date": stock.get("date", "-"),
 
         "price": stock.get("close"),
