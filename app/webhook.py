@@ -1,5 +1,6 @@
 ﻿import logging
 
+import re
 from time import perf_counter
 
 from fastapi import APIRouter, Request, HTTPException
@@ -20,6 +21,8 @@ from app.config import LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET
 from app.flex.builder import build_stock_dashboard_flex
 from services.ai_service import ai_stock_analysis
 from services.market_service import get_market_info
+from services.stock_name_service import get_stock_name
+from services.watchlist_service import WatchlistService
 from core.observability import clear_request_id, elapsed_ms, log_event, set_request_id
 
 
@@ -28,6 +31,13 @@ logger = logging.getLogger(__name__)
 
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN or "")
 handler = WebhookHandler(LINE_CHANNEL_SECRET or "")
+watchlist_service = WatchlistService()
+
+_WATCHLIST_COMMANDS = {
+    "加入自選": "add",
+    "移除自選": "remove",
+}
+_STOCK_ID_PATTERN = re.compile(r"^[0-9]+$")
 
 
 @router.post("/webhook")
@@ -67,6 +77,11 @@ async def line_webhook(request: Request):
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_text_message(event: MessageEvent):
     user_text = event.message.text.strip()
+
+    watchlist_command = _parse_watchlist_command(user_text)
+    if watchlist_command is not None:
+        _handle_watchlist_command(event, *watchlist_command)
+        return
 
     if not user_text.isdigit():
         safe_reply_text(event.reply_token, "請輸入股票代號，例如：2330")
@@ -193,6 +208,105 @@ def handle_text_message(event: MessageEvent):
             event.reply_token,
             "系統暫時無法完成查詢，請稍後再試。",
         )
+
+
+def _parse_watchlist_command(text: str) -> tuple[str, str | None] | None:
+    if text == "我的自選":
+        return "list", None
+    for prefix, action in _WATCHLIST_COMMANDS.items():
+        if text.startswith(prefix):
+            return action, text[len(prefix):].strip()
+    return None
+
+
+def _handle_watchlist_command(event: MessageEvent, action: str, stock_id: str | None) -> None:
+    user_id = _line_user_id(event)
+    if user_id is None:
+        safe_reply_text(event.reply_token, "無法識別使用者，請稍後再試。")
+        return
+
+    try:
+        if action == "list":
+            safe_reply_text(
+                event.reply_token,
+                _format_watchlist(watchlist_service.list_stocks(user_id)),
+            )
+            return
+
+        if not stock_id:
+            safe_reply_text(event.reply_token, "請輸入股票代號")
+            return
+        if _STOCK_ID_PATTERN.fullmatch(stock_id) is None:
+            safe_reply_text(event.reply_token, "股票代號格式錯誤")
+            return
+
+        if action == "add":
+            stock_name = get_stock_name(stock_id)
+            if (
+                not isinstance(stock_name, str)
+                or not stock_name.strip()
+                or stock_name == "未知股票"
+            ):
+                safe_reply_text(event.reply_token, "查無此股票")
+                return
+            if watchlist_service.add_stock(user_id, stock_id, stock_name):
+                safe_reply_text(
+                    event.reply_token,
+                    f"✅ 已加入自選股\n\n{stock_id} {stock_name.strip()}",
+                )
+            else:
+                safe_reply_text(event.reply_token, f"⚠️ {stock_id} 已在自選股中")
+            return
+
+        stocks = watchlist_service.list_stocks(user_id)
+        stock_name = next(
+            (
+                str(stock.get("stock_name", "")).strip()
+                for stock in stocks
+                if isinstance(stock, dict)
+                and str(stock.get("stock_id", "")).strip() == stock_id
+            ),
+            "",
+        )
+        if not watchlist_service.remove_stock(user_id, stock_id):
+            safe_reply_text(event.reply_token, f"⚠️ 自選股中沒有 {stock_id}")
+            return
+        safe_reply_text(
+            event.reply_token,
+            f"✅ 已移除自選股\n\n{stock_id} {stock_name}".rstrip(),
+        )
+    except Exception as error:
+        log_event(
+            logger,
+            "watchlist_command_end",
+            result="error",
+            error_type=type(error).__name__,
+        )
+        safe_reply_text(event.reply_token, "自選股服務暫時無法使用，請稍後再試。")
+
+
+def _line_user_id(event: MessageEvent) -> str | None:
+    source = getattr(event, "source", None)
+    user_id = getattr(source, "user_id", None)
+    if not isinstance(user_id, str) or not user_id.strip():
+        return None
+    return user_id.strip()
+
+
+def _format_watchlist(stocks) -> str:
+    if not isinstance(stocks, list) or not stocks:
+        return "目前沒有自選股"
+    lines = []
+    for stock in stocks:
+        if not isinstance(stock, dict):
+            continue
+        stock_id = str(stock.get("stock_id", "")).strip()
+        stock_name = str(stock.get("stock_name", "")).strip()
+        if stock_id:
+            lines.append(f"{len(lines) + 1}. {stock_id} {stock_name}".rstrip())
+    if not lines:
+        return "目前沒有自選股"
+    return "⭐ 我的自選股\n\n" + "\n".join(lines)
 
 
 def reply_message(reply_token: str, message):
