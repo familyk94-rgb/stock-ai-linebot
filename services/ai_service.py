@@ -81,15 +81,14 @@ def ai_stock_analysis(stock):
     except Exception:
         log_event(logger, "openai_analysis_end", result="fallback", elapsed=elapsed_ms(started_at), error_type="ClientInitializationError")
         _track_usage(model=OPENAI_MODEL, result="fallback", cache_hit=False, openai_call=False)
-        set_cache(cache_key, fallback)
         return fallback
 
     if client is None:
         log_event(logger, "openai_analysis_end", result="skipped", elapsed=elapsed_ms(started_at))
         _track_usage(model=OPENAI_MODEL, result="fallback", cache_hit=False, openai_call=False)
-        set_cache(cache_key, fallback)
         return fallback
 
+    cache_eligible = False
     try:
         prompt = _build_prompt(stock, fallback)
         response = client.chat.completions.create(
@@ -110,6 +109,7 @@ def ai_stock_analysis(stock):
         else:
             log_event(logger, "openai_analysis_end", result="success", elapsed=elapsed_ms(started_at))
             usage_result = "success"
+            cache_eligible = True
         response_model = getattr(response, "model", None)
         if not isinstance(response_model, str) or not response_model.strip():
             response_model = OPENAI_MODEL
@@ -136,7 +136,8 @@ def ai_stock_analysis(stock):
         analysis = fallback
 
     analysis = _limit_analysis_explain(analysis, fallback=fallback)
-    set_cache(cache_key, analysis)
+    if cache_eligible:
+        set_cache(cache_key, analysis)
     return analysis
 
 

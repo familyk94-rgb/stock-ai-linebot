@@ -37,6 +37,8 @@ def test_invalid_cache_records_once_and_never_calls_openai(monkeypatch):
 
 def test_openai_success_and_invalid_response_record_official_usage(monkeypatch):
     records = _base(monkeypatch)
+    stores = []
+    monkeypatch.setattr(ai_service, "set_cache", lambda *args: stores.append(args))
     usage = SimpleNamespace(prompt_tokens=10, completion_tokens=4, total_tokens=14)
     response = SimpleNamespace(model="response-model", usage=usage, choices=[SimpleNamespace(message=SimpleNamespace(content="json"))])
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **kwargs: response)))
@@ -46,12 +48,15 @@ def test_openai_success_and_invalid_response_record_official_usage(monkeypatch):
     assert records[0]["usage"] is usage
     assert records[0]["openai_call"] is True
     assert records[0]["result"] == "success"
+    assert len(stores) == 1
 
     records.clear()
+    stores.clear()
     monkeypatch.setattr(ai_service, "_parse_analysis", lambda *args, **kwargs: FALLBACK)
     ai_service.ai_stock_analysis(STOCK)
     assert records[0]["result"] == "fallback"
     assert records[0]["usage"] is usage
+    assert stores == []
 
 
 @pytest.mark.parametrize(
@@ -63,6 +68,11 @@ def test_openai_success_and_invalid_response_record_official_usage(monkeypatch):
 )
 def test_missing_key_and_client_failure_record_once(monkeypatch, client_factory, expected_result, openai_call):
     records = _base(monkeypatch)
+    monkeypatch.setattr(
+        ai_service,
+        "set_cache",
+        lambda *args: pytest.fail("fallback must not be cached"),
+    )
     monkeypatch.setattr(ai_service, "_create_client", client_factory)
     assert ai_service.ai_stock_analysis(STOCK) == FALLBACK
     assert len(records) == 1
@@ -72,6 +82,11 @@ def test_missing_key_and_client_failure_record_once(monkeypatch, client_factory,
 
 def test_timeout_records_once_with_zero_known_usage(monkeypatch):
     records = _base(monkeypatch)
+    monkeypatch.setattr(
+        ai_service,
+        "set_cache",
+        lambda *args: pytest.fail("timeout fallback must not be cached"),
+    )
     completions = SimpleNamespace(create=lambda **kwargs: (_ for _ in ()).throw(TimeoutError()))
     monkeypatch.setattr(ai_service, "_create_client", lambda: SimpleNamespace(chat=SimpleNamespace(completions=completions)))
     assert ai_service.ai_stock_analysis(STOCK) == FALLBACK

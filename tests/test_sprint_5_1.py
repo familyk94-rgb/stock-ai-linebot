@@ -35,6 +35,7 @@ def test_no_api_key_import_and_fallback(monkeypatch):
 
     assert "趨勢總結：" in result["ai_summary"]
     assert "技術面：" in result["explain"]
+    assert CACHE == {}
 
 
 def test_timeout_uses_fallback(monkeypatch):
@@ -223,6 +224,290 @@ def test_openai_success_uses_complete_contract_and_calls_once(monkeypatch):
     assert result == model
 
 
+def _fake_openai_response(content, *, usage=None):
+    return SimpleNamespace(
+        model=ai_service.OPENAI_MODEL,
+        usage=usage,
+        choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+    )
+
+
+def _fake_openai_client(create):
+    return SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    )
+
+
+def test_only_valid_openai_success_is_cached_and_second_request_is_cache_hit(
+    monkeypatch,
+):
+    CACHE.clear()
+    stock = _stock_with_news_and_composite("valid-success-cache")
+    model = _valid_model_result()
+    calls = {"client": 0, "openai": 0, "store": 0}
+    original_set_cache = ai_service.set_cache
+
+    def create(**kwargs):
+        calls["openai"] += 1
+        return _fake_openai_response(json.dumps(model, ensure_ascii=False))
+
+    def create_client():
+        calls["client"] += 1
+        return _fake_openai_client(create)
+
+    def store(key, value):
+        calls["store"] += 1
+        original_set_cache(key, value)
+
+    monkeypatch.setattr(ai_service, "_create_client", create_client)
+    monkeypatch.setattr(ai_service, "set_cache", store)
+
+    first = ai_service.ai_stock_analysis(stock)
+    second = ai_service.ai_stock_analysis(stock)
+
+    assert first == second == model
+    assert calls == {"client": 1, "openai": 1, "store": 1}
+    cache_key = f"ai_dashboard_v2_{stock['stock_id']}_{stock['date']}"
+    assert CACHE[cache_key]["data"] == model
+
+
+@pytest.mark.parametrize(
+    ("error_name", "expected_usage_result"),
+    [
+        ("APITimeoutError", "timeout"),
+        ("Timeout", "timeout"),
+        ("TimeoutError", "timeout"),
+        ("APIConnectionError", "fallback"),
+        ("APIStatusError", "fallback"),
+        ("RateLimitError", "fallback"),
+        ("UnexpectedOpenAIError", "fallback"),
+    ],
+)
+def test_openai_request_exceptions_return_fallback_without_caching(
+    monkeypatch, error_name, expected_usage_result
+):
+    CACHE.clear()
+    stock = _stock_with_news_and_composite(f"no-cache-{error_name}")
+    fallback = build_analysis_sections(stock)
+    calls = {"openai": 0, "store": 0}
+    usage_records = []
+    error_type = type(error_name, (Exception,), {})
+
+    def create(**kwargs):
+        calls["openai"] += 1
+        raise error_type("simulated")
+
+    monkeypatch.setattr(ai_service, "_create_client", lambda: _fake_openai_client(create))
+    monkeypatch.setattr(
+        ai_service,
+        "set_cache",
+        lambda *args: calls.__setitem__("store", calls["store"] + 1),
+    )
+    monkeypatch.setattr(
+        ai_service,
+        "record_analysis_usage",
+        lambda **kwargs: usage_records.append(kwargs) or True,
+    )
+
+    result = ai_service.ai_stock_analysis(stock)
+
+    assert result == fallback
+    assert calls == {"openai": 1, "store": 0}
+    assert len(usage_records) == 1
+    assert usage_records[0]["result"] == expected_usage_result
+    assert usage_records[0]["openai_call"] is True
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        _fake_openai_response(""),
+        _fake_openai_response("not-json"),
+        _fake_openai_response(json.dumps([])),
+        SimpleNamespace(choices=[]),
+        SimpleNamespace(choices=[SimpleNamespace()]),
+        SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace())]),
+        SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=None))]
+        ),
+    ],
+    ids=[
+        "empty-content",
+        "malformed-json",
+        "json-not-dict",
+        "missing-choices",
+        "missing-message",
+        "missing-content",
+        "none-content",
+    ],
+)
+def test_invalid_openai_response_structure_is_not_cached(monkeypatch, response):
+    CACHE.clear()
+    stock = _stock_with_news_and_composite("invalid-response-structure")
+    fallback = build_analysis_sections(stock)
+    stores = []
+    openai_calls = []
+
+    def create(**kwargs):
+        openai_calls.append(kwargs)
+        return response
+
+    monkeypatch.setattr(ai_service, "_create_client", lambda: _fake_openai_client(create))
+    monkeypatch.setattr(ai_service, "set_cache", lambda *args: stores.append(args))
+
+    assert ai_service.ai_stock_analysis(stock) == fallback
+    assert len(openai_calls) == 1
+    assert stores == []
+
+
+def _invalid_contract_models():
+    missing_summary = _valid_model_result()
+    missing_summary.pop("ai_summary")
+
+    missing_explain = _valid_model_result()
+    missing_explain.pop("explain")
+
+    summary_missing_label = _valid_model_result()
+    summary_label = ai_service.SUMMARY_LABELS[0]
+    summary_missing_label["ai_summary"] = "\n".join(
+        line
+        for line in summary_missing_label["ai_summary"].splitlines()
+        if not line.startswith(f"{summary_label}：")
+    )
+
+    explain_missing_section = _valid_model_result()
+    explain_label = ai_service.EXPLAIN_LABELS[0]
+    explain_missing_section["explain"] = "\n".join(
+        line
+        for line in explain_missing_section["explain"].splitlines()
+        if not line.startswith(f"{explain_label}：")
+    )
+
+    wrong_order = _valid_model_result()
+    lines = wrong_order["explain"].splitlines()
+    first = next(i for i, line in enumerate(lines) if line.startswith(f"{ai_service.EXPLAIN_LABELS[0]}："))
+    second = next(i for i, line in enumerate(lines) if line.startswith(f"{ai_service.EXPLAIN_LABELS[1]}："))
+    lines[first], lines[second] = lines[second], lines[first]
+    wrong_order["explain"] = "\n".join(lines)
+
+    forbidden = _valid_model_result()
+    forbidden["explain"] += "\nhttps://example.com"
+
+    missing_fundamental_contract = _valid_model_result()
+    missing_fundamental_contract["explain"] = missing_fundamental_contract[
+        "explain"
+    ].replace("基本面：尚未整合", "基本面：資料不足", 1)
+
+    missing_institution_contract = _valid_model_result()
+    missing_institution_contract["explain"] = missing_institution_contract[
+        "explain"
+    ].replace("籌碼面：尚未整合", "籌碼面：資料不足", 1)
+
+    overlap = _valid_model_result()
+    shared = "相同分析內容測試文字"
+    overlap["ai_summary"] = overlap["ai_summary"].replace(
+        f"{ai_service.SUMMARY_LABELS[0]}：",
+        f"{ai_service.SUMMARY_LABELS[0]}：{shared}",
+        1,
+    )
+    overlap["explain"] = overlap["explain"].replace(
+        f"{ai_service.EXPLAIN_LABELS[0]}：",
+        f"{ai_service.EXPLAIN_LABELS[0]}：{shared}",
+        1,
+    )
+
+    return [
+        pytest.param(missing_summary, id="missing-summary"),
+        pytest.param(missing_explain, id="missing-explain"),
+        pytest.param(summary_missing_label, id="summary-validation"),
+        pytest.param(explain_missing_section, id="explain-validation"),
+        pytest.param(wrong_order, id="explain-order"),
+        pytest.param(forbidden, id="forbidden-text"),
+        pytest.param(
+            missing_fundamental_contract,
+            id="missing-fundamental-contract",
+        ),
+        pytest.param(
+            missing_institution_contract,
+            id="missing-institution-contract",
+        ),
+        pytest.param(overlap, id="summary-explain-overlap"),
+    ]
+
+
+@pytest.mark.parametrize("model", _invalid_contract_models())
+def test_validation_failures_are_not_cached(monkeypatch, model):
+    CACHE.clear()
+    stock = _stock_with_news_and_composite("invalid-contract-no-cache")
+    fallback = build_analysis_sections(stock)
+    stores = []
+    response = _fake_openai_response(json.dumps(model, ensure_ascii=False))
+    monkeypatch.setattr(
+        ai_service,
+        "_create_client",
+        lambda: _fake_openai_client(lambda **kwargs: response),
+    )
+    monkeypatch.setattr(ai_service, "set_cache", lambda *args: stores.append(args))
+
+    assert ai_service.ai_stock_analysis(stock) == fallback
+    assert stores == []
+
+
+@pytest.mark.parametrize("client_factory", [lambda: None, lambda: (_ for _ in ()).throw(RuntimeError("init"))])
+def test_missing_key_and_client_initialization_failure_are_not_cached(
+    monkeypatch, client_factory
+):
+    CACHE.clear()
+    stock = _stock_with_news_and_composite("client-unavailable-no-cache")
+    stores = []
+    monkeypatch.setattr(ai_service, "_create_client", client_factory)
+    monkeypatch.setattr(ai_service, "set_cache", lambda *args: stores.append(args))
+
+    assert ai_service.ai_stock_analysis(stock) == build_analysis_sections(stock)
+    assert stores == []
+
+
+def test_cache_lookup_exception_still_allows_success_to_be_cached(monkeypatch):
+    stock = _stock_with_news_and_composite("lookup-error-success")
+    model = _valid_model_result()
+    stores = []
+    calls = {"openai": 0}
+
+    def create(**kwargs):
+        calls["openai"] += 1
+        return _fake_openai_response(json.dumps(model, ensure_ascii=False))
+
+    monkeypatch.setattr(
+        ai_service,
+        "get_cache",
+        lambda key: (_ for _ in ()).throw(RuntimeError("lookup")),
+    )
+    monkeypatch.setattr(ai_service, "_create_client", lambda: _fake_openai_client(create))
+    monkeypatch.setattr(ai_service, "set_cache", lambda *args: stores.append(args))
+
+    assert ai_service.ai_stock_analysis(stock) == model
+    assert calls["openai"] == 1
+    assert len(stores) == 1
+    assert stores[0][1] == model
+
+
+def test_invalid_existing_cache_does_not_call_openai_or_store(monkeypatch):
+    stock = _stock_with_news_and_composite("invalid-existing-cache")
+    monkeypatch.setattr(ai_service, "get_cache", lambda key: {"invalid": True})
+    monkeypatch.setattr(
+        ai_service,
+        "_create_client",
+        lambda: pytest.fail("OpenAI client must not be created"),
+    )
+    monkeypatch.setattr(
+        ai_service,
+        "set_cache",
+        lambda *args: pytest.fail("invalid cache must not be replaced"),
+    )
+
+    assert ai_service.ai_stock_analysis(stock) == build_analysis_sections(stock)
+
+
 def test_each_missing_explain_section_uses_fallback():
     fallback = build_analysis_sections(_stock_with_news_and_composite("missing-section"))
     for label in ai_service.EXPLAIN_LABELS:
@@ -386,6 +671,8 @@ def test_long_valid_openai_explain_preserves_sections_and_calls_once(monkeypatch
     assert len(result["explain"]) <= 3000
     assert "…" in result["explain"]
     _assert_eight_sections_in_order(result["explain"])
+    cache_key = f"ai_dashboard_v2_{stock['stock_id']}_{stock['date']}"
+    assert CACHE[cache_key]["data"] == result
 
 
 def test_below_limit_explain_is_unchanged():
