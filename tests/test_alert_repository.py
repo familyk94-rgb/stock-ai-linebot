@@ -51,6 +51,21 @@ def test_list_alerts_isolated_by_user_and_stock(tmp_path):
     assert {item["line_user_id"] for item in enabled_2330} == {"user-1", "user-2"}
 
 
+def test_list_alerts_orders_enabled_then_stock_then_created_and_id(tmp_path):
+    repository = AlertRepository(tmp_path / "alerts.db")
+    disabled = _add(repository, user="user-1", stock="2317")["id"]
+    assert repository.disable_alert(disabled, "user-1")
+    assert _add(repository, user="user-1", stock="2454")
+    assert _add(repository, user="user-1", stock="2330")
+
+    alerts = repository.list_alerts("user-1")
+    assert [(item["stock_id"], item["enabled"]) for item in alerts] == [
+        ("2330", True),
+        ("2454", True),
+        ("2317", False),
+    ]
+
+
 def test_duplicate_add_returns_none(tmp_path):
     repository = AlertRepository(tmp_path / "alerts.db")
     assert _add(repository) is not None

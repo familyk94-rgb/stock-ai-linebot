@@ -18,7 +18,9 @@ from linebot.v3.webhook import WebhookHandler
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 
 from app.config import LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET
+from app.flex.alert_list_card import build_alert_list_flex
 from app.flex.builder import build_stock_dashboard_flex
+from services.alert_management_service import AlertManagementService
 from services.ai_service import ai_stock_analysis
 from services.market_service import get_market_info
 from services.stock_name_service import get_stock_name
@@ -32,6 +34,7 @@ logger = logging.getLogger(__name__)
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN or "")
 handler = WebhookHandler(LINE_CHANNEL_SECRET or "")
 watchlist_service = WatchlistService()
+alert_management_service = AlertManagementService()
 
 _WATCHLIST_COMMANDS = {
     "加入自選": "add",
@@ -77,6 +80,10 @@ async def line_webhook(request: Request):
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_text_message(event: MessageEvent):
     user_text = event.message.text.strip()
+
+    if user_text in {"我的提醒", "新增提醒"}:
+        _handle_alert_management_command(event, user_text)
+        return
 
     watchlist_command = _parse_watchlist_command(user_text)
     if watchlist_command is not None:
@@ -283,6 +290,29 @@ def _handle_watchlist_command(event: MessageEvent, action: str, stock_id: str | 
             error_type=type(error).__name__,
         )
         safe_reply_text(event.reply_token, "自選股服務暫時無法使用，請稍後再試。")
+
+
+def _handle_alert_management_command(event: MessageEvent, command: str) -> None:
+    if command == "新增提醒":
+        safe_reply_text(event.reply_token, "新增提醒功能即將開放。")
+        return
+
+    user_id = _line_user_id(event)
+    if user_id is None:
+        safe_reply_text(event.reply_token, "無法識別使用者，請稍後再試。")
+        return
+
+    try:
+        result = alert_management_service.list_user_alerts(user_id)
+        reply_message(event.reply_token, build_alert_list_flex(result))
+    except Exception as error:
+        log_event(
+            logger,
+            "line_message_end",
+            result="error",
+            error_type=type(error).__name__,
+        )
+        safe_reply_text(event.reply_token, "提醒服務暫時無法使用，請稍後再試。")
 
 
 def _line_user_id(event: MessageEvent) -> str | None:

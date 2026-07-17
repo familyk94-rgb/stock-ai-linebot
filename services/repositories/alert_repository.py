@@ -132,7 +132,8 @@ class AlertRepository:
         connection = self._connect()
         try:
             rows = connection.execute(
-                "SELECT * FROM alerts WHERE line_user_id = ? ORDER BY created_at, id",
+                """SELECT * FROM alerts WHERE line_user_id = ?
+                ORDER BY enabled DESC, stock_id ASC, created_at ASC, id ASC""",
                 (line_user_id,),
             ).fetchall()
             return [_row_to_alert(row) for row in rows]
