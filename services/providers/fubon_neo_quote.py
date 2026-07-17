@@ -38,16 +38,30 @@ SAFE_REASONS = frozenset(
 FIELD_ALIASES = {
     "symbol": ("symbol", "stock_no", "stockNo", "code"),
     "market": ("market", "exchange", "marketType"),
-    "timestamp": ("timestamp", "time", "datetime"),
+    "timestamp": (
+        "timestamp",
+        "tradeTime",
+        "tradeTs",
+        "lastUpdated",
+        "lastTradeTime",
+        "time",
+        "datetime",
+    ),
     "status": ("status", "market_status", "marketStatus"),
-    "price": ("price", "last_price", "lastPrice", "close_price", "closePrice"),
-    "reference": ("reference", "reference_price", "referencePrice", "ref_price"),
+    "price": ("lastPrice", "close", "price", "last_price", "close_price", "closePrice"),
+    "reference": ("referencePrice", "reference", "reference_price", "ref_price"),
     "change": ("change", "price_change", "priceChange"),
     "change_percent": ("change_percent", "changePercent", "change_rate"),
-    "open": ("open", "open_price", "openPrice"),
-    "high": ("high", "high_price", "highPrice"),
-    "low": ("low", "low_price", "lowPrice"),
-    "volume": ("volume", "total_volume", "totalVolume"),
+    "open": ("openPrice", "open", "open_price"),
+    "high": ("highPrice", "high", "high_price"),
+    "low": ("lowPrice", "low", "low_price"),
+    "volume": (
+        "volume",
+        "tradeVolume",
+        "accumulateVolume",
+        "total_volume",
+        "totalVolume",
+    ),
     "is_realtime": ("is_realtime", "isRealtime", "realtime"),
 }
 
@@ -167,7 +181,7 @@ def _adapt_quote(payload: Any, expected_symbol: Any) -> AdapterResult:
             numeric["change"] / numeric["reference"] * 100
         )
 
-    status = _status(_value(payload, "status"))
+    status = _status_from_payload(payload)
     market = _market(_value(payload, "market"))
     explicit_realtime = _value(payload, "is_realtime") is True
     realtime_candidate = bool(
@@ -239,6 +253,13 @@ def _value(payload: Any, field: str) -> Any:
                 continue
             except Exception:
                 continue
+    if field == "volume" and isinstance(payload, Mapping):
+        total = payload.get("total", _MISSING)
+        if isinstance(total, Mapping) and "tradeVolume" in total:
+            nested_volume = total["tradeVolume"]
+            if _finite_number(nested_volume) is not None:
+                insert_at = 1 if "volume" in payload else 0
+                values.insert(insert_at, nested_volume)
     if not values:
         return _MISSING
     normalized = [_alias_comparison_value(field, value) for value in values]
@@ -318,7 +339,10 @@ def _timestamp(value: Any) -> datetime | None:
         number = _finite_number(value)
         if number is None:
             return None
-        if number > 1_000_000_000_000:
+        magnitude = abs(number)
+        if magnitude >= 100_000_000_000_000:
+            number /= 1_000_000
+        elif magnitude >= 100_000_000_000:
             number /= 1000
         try:
             result = datetime.fromtimestamp(number, tz=timezone.utc)
@@ -355,6 +379,19 @@ def _status(value: Any) -> str:
     if not isinstance(value, str):
         return "unknown"
     return _STATUS_VALUES.get(value.strip().casefold(), "unknown")
+
+
+def _status_from_payload(payload: Any) -> str:
+    explicit = _value(payload, "status")
+    if explicit is not _MISSING and not _is_blank(explicit):
+        return _status(explicit)
+    if isinstance(payload, Mapping):
+        is_close = payload.get("isClose", _MISSING)
+        if is_close is True:
+            return "closed"
+        if is_close is False:
+            return "trading"
+    return "unknown"
 
 
 def _market(value: Any) -> str | None:

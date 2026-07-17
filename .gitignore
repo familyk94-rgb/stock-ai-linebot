@@ -7,8 +7,17 @@ __pycache__/
 # Virtual Environment
 .venv/
 
-# Environment Variables
+# Local environment secrets
 .env
+.env.*
+!.env.example
+
+# Fubon Neo certificates
+*.pfx
+*.p12
+*.pem
+*.cer
+*.crt
 
 # VS Code
 .vscode/

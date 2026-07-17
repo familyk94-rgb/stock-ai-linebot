@@ -98,6 +98,36 @@ def test_missing_configuration_does_not_import_sdk_or_log_secrets():
     assert "private" not in repr(manager.readiness())
 
 
+def test_missing_certificate_password_is_not_configured():
+    env = {key: value for key, value in BASE_ENV.items() if key != "FUBON_CERT_PASSWORD"}
+    manager, sdk = _manager(env=env)
+    assert manager.ensure_login() is False
+    assert sdk.login_calls == []
+    assert manager.readiness()["reason"] == "missing_configuration"
+
+
+def test_empty_certificate_password_is_valid_and_uses_three_login_arguments():
+    env = {**BASE_ENV, "FUBON_CERT_PASSWORD": ""}
+    manager, sdk = _manager(env=env)
+    assert manager.ensure_login() is True
+    assert len(sdk.login_calls) == 1
+    assert len(sdk.login_calls[0]) == 3
+
+
+def test_non_empty_certificate_password_uses_four_login_arguments():
+    manager, sdk = _manager()
+    assert manager.ensure_login() is True
+    assert len(sdk.login_calls) == 1
+    assert len(sdk.login_calls[0]) == 4
+
+
+def test_empty_user_id_is_not_configured():
+    manager, sdk = _manager(env={**BASE_ENV, "FUBON_USER_ID": ""})
+    assert manager.ensure_login() is False
+    assert sdk.login_calls == []
+    assert manager.readiness()["reason"] == "missing_configuration"
+
+
 def test_sdk_unavailable_is_degraded_without_import_crash():
     def unavailable(name):
         raise ModuleNotFoundError("sensitive module failure")

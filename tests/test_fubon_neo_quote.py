@@ -12,6 +12,9 @@ from services.providers.quote import DATA_QUALITIES, QUOTE_STATUSES, Quote
 
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "fubon_neo" / "quote_contract_cases.json"
+PRODUCTION_FIXTURE_PATH = (
+    Path(__file__).parent / "fixtures" / "fubon_neo" / "production_quote_sample.json"
+)
 QUOTE_FIELDS = [
     "provider", "symbol", "market", "timestamp", "status", "price",
     "reference", "change", "change_percent", "open", "high", "low",
@@ -218,6 +221,20 @@ def test_supported_timestamps(value, expected):
 
 @pytest.mark.parametrize(
     "value",
+    [1784255400, 1784255400000, 1784255400000000],
+)
+def test_unix_timestamp_seconds_milliseconds_and_microseconds(value):
+    expected = datetime.fromtimestamp(1784255400, tz=timezone.utc)
+    assert adapt_quote(_valid(timestamp=value)).quote.timestamp == expected
+
+
+@pytest.mark.parametrize("value", [10**40, -(10**40), float("nan"), float("inf")])
+def test_invalid_timestamp_units_fail_safely(value):
+    assert adapt_quote(_valid(timestamp=value)).reason == "invalid_timestamp"
+
+
+@pytest.mark.parametrize(
+    "value",
     [
         "1999-12-31T23:59:59Z",
         "2100-01-01T00:00:01Z",
@@ -297,6 +314,44 @@ def test_incomplete_fixture_is_not_falsely_realtime(cases):
     assert quote.data_quality == "incomplete"
     assert quote.is_realtime is False
     assert quote.data_quality in DATA_QUALITIES
+
+
+def test_production_fixture_maps_nested_volume_microseconds_and_closed_status():
+    payload = json.loads(PRODUCTION_FIXTURE_PATH.read_text(encoding="utf-8"))
+    result = adapt_quote(payload, expected_symbol="2330")
+    assert result.ok is True
+    quote = result.quote
+    assert quote.symbol == payload["symbol"]
+    assert quote.price == float(payload["lastPrice"])
+    assert quote.reference == float(payload["referencePrice"])
+    assert quote.open == float(payload["openPrice"])
+    assert quote.high == float(payload["highPrice"])
+    assert quote.low == float(payload["lowPrice"])
+    assert quote.volume == payload["total"]["tradeVolume"]
+    assert quote.timestamp == datetime.fromtimestamp(
+        payload["lastUpdated"] / 1_000_000,
+        tz=timezone.utc,
+    )
+    assert payload["exchange"] == "TWSE"
+    assert quote.market == "TWSE"
+    assert quote.status == "closed"
+    assert quote.is_realtime is False
+    assert quote.data_quality == "delayed"
+    assert quote.data_quality in DATA_QUALITIES
+
+
+@pytest.mark.parametrize(
+    "total",
+    [None, 1, "invalid", {}, {"tradeVolume": None}, {"tradeVolume": "invalid"}],
+)
+def test_invalid_nested_total_volume_degrades_safely(total):
+    payload = _valid()
+    payload.pop("volume")
+    payload["total"] = total
+    result = adapt_quote(payload)
+    assert result.ok is True
+    assert result.quote.volume is None
+    assert result.quote.data_quality == "incomplete"
 
 
 @pytest.mark.parametrize("payload", [None, {}])

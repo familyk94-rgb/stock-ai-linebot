@@ -1,0 +1,94 @@
+{
+  "date": "2026-07-17",
+  "type": "EQUITY",
+  "exchange": "TWSE",
+  "market": "TSE",
+  "symbol": "2330",
+  "name": "台積電",
+  "referencePrice": 2470,
+  "openPrice": 2375,
+  "openTime": 1784250006465081,
+  "highPrice": 2395,
+  "highTime": 1784250147434443,
+  "lowPrice": 2290,
+  "lowTime": 1784266200000000,
+  "closePrice": 2290,
+  "closeTime": 1784266200000000,
+  "avgPrice": 2351.58,
+  "change": -180,
+  "changePercent": -7.29,
+  "amplitude": 4.25,
+  "lastPrice": 2290,
+  "lastSize": 9277,
+  "bids": [
+    {
+      "price": 2285,
+      "size": 712
+    },
+    {
+      "price": 2280,
+      "size": 698
+    },
+    {
+      "price": 2275,
+      "size": 296
+    },
+    {
+      "price": 2270,
+      "size": 268
+    },
+    {
+      "price": 2265,
+      "size": 235
+    }
+  ],
+  "asks": [
+    {
+      "price": 2290,
+      "size": 321
+    },
+    {
+      "price": 2295,
+      "size": 282
+    },
+    {
+      "price": 2300,
+      "size": 348
+    },
+    {
+      "price": 2305,
+      "size": 283
+    },
+    {
+      "price": 2310,
+      "size": 306
+    }
+  ],
+  "total": {
+    "tradeValue": 175220930000,
+    "tradeVolume": 74512,
+    "tradeVolumeAtBid": 38402,
+    "tradeVolumeAtAsk": 30225,
+    "transaction": 20943,
+    "time": 1784266200000000
+  },
+  "lastTrade": {
+    "bid": 2285,
+    "ask": 2290,
+    "price": 2290,
+    "size": 9277,
+    "time": 1784266200000000,
+    "serial": 20234582
+  },
+  "lastTrial": {
+    "bid": 2285,
+    "ask": 2290,
+    "price": 2285,
+    "size": 9109,
+    "time": 1784266197446030,
+    "serial": 20233861
+  },
+  "isClose": true,
+  "serial": 20234582,
+  "lastUpdated": 1784266200000000
+}

@@ -20,11 +20,10 @@ from core.observability import log_event
 logger = logging.getLogger(__name__)
 
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
-_REQUIRED_ENV = (
+_REQUIRED_NON_EMPTY_ENV = (
     "FUBON_USER_ID",
     "FUBON_PASSWORD",
     "FUBON_CERT_PATH",
-    "FUBON_CERT_PASSWORD",
 )
 _ACCOUNT_NUMBER_FIELDS = (
     "account",
@@ -107,12 +106,19 @@ class FubonNeoClientManager:
                 return False
 
             try:
-                result = sdk.login(
-                    self._value("FUBON_USER_ID"),
-                    self._value("FUBON_PASSWORD"),
-                    self._value("FUBON_CERT_PATH"),
-                    self._value("FUBON_CERT_PASSWORD"),
-                )
+                user_id = self._value("FUBON_USER_ID")
+                password = self._value("FUBON_PASSWORD")
+                cert_path = self._value("FUBON_CERT_PATH")
+                cert_password = self._value("FUBON_CERT_PASSWORD")
+                if cert_password:
+                    result = sdk.login(
+                        user_id,
+                        password,
+                        cert_path,
+                        cert_password,
+                    )
+                else:
+                    result = sdk.login(user_id, password, cert_path)
                 if _field(result, "is_success") is not True:
                     self._set_degraded("login_failed")
                     self._safe_event("login", "login_failed")
@@ -199,7 +205,10 @@ class FubonNeoClientManager:
         return self._value("FUBON_NEO_ENABLED").casefold() in _TRUE_VALUES
 
     def _configured(self) -> bool:
-        return all(self._value(name) for name in _REQUIRED_ENV)
+        return (
+            all(self._value(name) for name in _REQUIRED_NON_EMPTY_ENV)
+            and self._environ.get("FUBON_CERT_PASSWORD") is not None
+        )
 
     def _value(self, name: str) -> str:
         value = self._environ.get(name, "")
