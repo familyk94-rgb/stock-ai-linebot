@@ -1,11 +1,13 @@
 import importlib
 import json
+import logging
 from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
 
 import services.ai_service as ai_service
+from core import observability
 from core.explain_engine import build_analysis_sections
 from services.cache_service import CACHE
 
@@ -269,6 +271,194 @@ def test_only_valid_openai_success_is_cached_and_second_request_is_cache_hit(
     assert calls == {"client": 1, "openai": 1, "store": 1}
     cache_key = f"ai_dashboard_v2_{stock['stock_id']}_{stock['date']}"
     assert CACHE[cache_key]["data"] == model
+
+
+def test_successful_cache_store_does_not_emit_store_failure_event(
+    monkeypatch, caplog
+):
+    CACHE.clear()
+    stock = _stock_with_news_and_composite("cache-store-success-event")
+    model = _valid_model_result()
+    response = _fake_openai_response(json.dumps(model, ensure_ascii=False))
+    monkeypatch.setattr(
+        ai_service,
+        "_create_client",
+        lambda: _fake_openai_client(lambda **kwargs: response),
+    )
+
+    with caplog.at_level(logging.INFO, logger=ai_service.logger.name):
+        assert ai_service.ai_stock_analysis(stock) == model
+
+    assert "operation=cache_store" not in caplog.text
+
+
+@pytest.mark.parametrize("store_error", [RuntimeError, OSError])
+def test_cache_store_failure_is_best_effort_and_preserves_success_contract(
+    monkeypatch, caplog, store_error
+):
+    CACHE.clear()
+    stock = _stock_with_news_and_composite(
+        f"cache-store-{store_error.__name__}"
+    )
+    model = _valid_model_result()
+    usage = SimpleNamespace(
+        prompt_tokens=21,
+        completion_tokens=9,
+        total_tokens=30,
+    )
+    response = _fake_openai_response(
+        json.dumps(model, ensure_ascii=False), usage=usage
+    )
+    calls = {"openai": 0, "store": 0}
+    usage_records = []
+
+    def create(**kwargs):
+        calls["openai"] += 1
+        return response
+
+    def fail_store(key, analysis):
+        calls["store"] += 1
+        raise store_error(
+            "PRIVATE_CACHE_KEY_2330 PRIVATE_PROMPT PRIVATE_RESPONSE PRIVATE_SECRET"
+        )
+
+    monkeypatch.setattr(
+        ai_service, "_create_client", lambda: _fake_openai_client(create)
+    )
+    monkeypatch.setattr(ai_service, "set_cache", fail_store)
+    monkeypatch.setattr(
+        ai_service,
+        "record_analysis_usage",
+        lambda **kwargs: usage_records.append(kwargs) or True,
+    )
+    token = observability.set_request_id("cache-store-request")
+    try:
+        with caplog.at_level(logging.INFO, logger=ai_service.logger.name):
+            result = ai_service.ai_stock_analysis(stock)
+    finally:
+        observability.clear_request_id(token)
+
+    assert result == model
+    assert result != build_analysis_sections(stock)
+    assert calls == {"openai": 1, "store": 1}
+    assert len(usage_records) == 1
+    assert usage_records[0]["result"] == "success"
+    assert usage_records[0]["openai_call"] is True
+    assert usage_records[0]["usage"] is usage
+    store_events = [
+        record.getMessage()
+        for record in caplog.records
+        if "operation=cache_store" in record.getMessage()
+    ]
+    assert len(store_events) == 1
+    assert "event=service_fallback" in store_events[0]
+    assert "result=fallback" in store_events[0]
+    assert "request_id=cache-store-request" in store_events[0]
+    assert "service=ai" in store_events[0]
+    assert f"error_type={store_error.__name__}" in store_events[0]
+    for sensitive in (
+        "PRIVATE_CACHE_KEY",
+        "2330",
+        "PRIVATE_PROMPT",
+        "PRIVATE_RESPONSE",
+        "PRIVATE_SECRET",
+        model["ai_summary"],
+        model["explain"],
+    ):
+        assert sensitive not in store_events[0]
+
+
+def test_cache_store_failure_does_not_retry_and_next_request_is_a_miss(
+    monkeypatch,
+):
+    CACHE.clear()
+    stock = _stock_with_news_and_composite("cache-store-next-miss")
+    model = _valid_model_result()
+    response = _fake_openai_response(json.dumps(model, ensure_ascii=False))
+    calls = {"openai": 0, "store": 0}
+
+    def create(**kwargs):
+        calls["openai"] += 1
+        return response
+
+    def fail_store(key, analysis):
+        calls["store"] += 1
+        raise RuntimeError("store")
+
+    monkeypatch.setattr(
+        ai_service, "_create_client", lambda: _fake_openai_client(create)
+    )
+    monkeypatch.setattr(ai_service, "set_cache", fail_store)
+
+    assert ai_service.ai_stock_analysis(stock) == model
+    assert ai_service.ai_stock_analysis(stock) == model
+    assert calls == {"openai": 2, "store": 2}
+    assert CACHE == {}
+
+
+def test_cache_lookup_and_store_failures_still_return_openai_success(
+    monkeypatch, caplog
+):
+    stock = _stock_with_news_and_composite("lookup-and-store-failure")
+    model = _valid_model_result()
+    response = _fake_openai_response(json.dumps(model, ensure_ascii=False))
+    calls = {"openai": 0, "store": 0}
+
+    def create(**kwargs):
+        calls["openai"] += 1
+        return response
+
+    def fail_store(key, analysis):
+        calls["store"] += 1
+        raise RuntimeError("store")
+
+    monkeypatch.setattr(
+        ai_service,
+        "get_cache",
+        lambda key: (_ for _ in ()).throw(RuntimeError("lookup")),
+    )
+    monkeypatch.setattr(
+        ai_service, "_create_client", lambda: _fake_openai_client(create)
+    )
+    monkeypatch.setattr(ai_service, "set_cache", fail_store)
+
+    with caplog.at_level(logging.INFO, logger=ai_service.logger.name):
+        result = ai_service.ai_stock_analysis(stock)
+
+    assert result == model
+    assert calls == {"openai": 1, "store": 1}
+    assert caplog.text.count("event=ai_cache_lookup_end") == 1
+    assert "cache_status=error" in caplog.text
+    assert caplog.text.count("operation=cache_store") == 1
+
+
+def test_cache_store_event_logging_failure_does_not_change_analysis(
+    monkeypatch,
+):
+    stock = _stock_with_news_and_composite("store-log-failure")
+    model = _valid_model_result()
+    response = _fake_openai_response(json.dumps(model, ensure_ascii=False))
+    monkeypatch.setattr(ai_service, "get_cache", lambda key: None)
+    monkeypatch.setattr(
+        ai_service,
+        "_create_client",
+        lambda: _fake_openai_client(lambda **kwargs: response),
+    )
+    monkeypatch.setattr(
+        ai_service,
+        "set_cache",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("store")),
+    )
+    original_log_event = ai_service.log_event
+
+    def fail_store_event(logger, event, **kwargs):
+        if event == "service_fallback":
+            raise RuntimeError("log")
+        return original_log_event(logger, event, **kwargs)
+
+    monkeypatch.setattr(ai_service, "log_event", fail_store_event)
+
+    assert ai_service.ai_stock_analysis(stock) == model
 
 
 @pytest.mark.parametrize(

@@ -137,8 +137,25 @@ def ai_stock_analysis(stock):
 
     analysis = _limit_analysis_explain(analysis, fallback=fallback)
     if cache_eligible:
-        set_cache(cache_key, analysis)
+        _safe_set_cache(cache_key, analysis)
     return analysis
+
+
+def _safe_set_cache(cache_key: str, analysis: dict) -> None:
+    try:
+        set_cache(cache_key, analysis)
+    except Exception as error:
+        try:
+            log_event(
+                logger,
+                "service_fallback",
+                result="fallback",
+                error_type=type(error).__name__,
+                service="ai",
+                operation="cache_store",
+            )
+        except Exception:
+            pass
 
 
 def _track_usage(**kwargs) -> None:

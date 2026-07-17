@@ -1,9 +1,12 @@
+import json
 from types import SimpleNamespace
 
 import pytest
 from linebot.v3.messaging import TextMessage
 
 import app.config as app_config
+from core.explain_engine import build_analysis_sections
+from services import ai_service
 
 _original_secret = app_config.LINE_CHANNEL_SECRET
 _original_token = app_config.LINE_CHANNEL_ACCESS_TOKEN
@@ -118,6 +121,69 @@ def test_normal_flow_maps_flex_data_and_replies_once(monkeypatch):
     assert calls["flex_data"]["composite_coverage"] == 100
     assert calls["flex_data"]["data_quality_status"] == "部分資料"
     assert calls["flex_data"]["data_quality_is_stale"] is True
+
+
+def test_ai_cache_store_failure_still_builds_and_replies_once(monkeypatch):
+    market = _market_data(date="2026-07-17")
+    model = build_analysis_sections(market)
+    calls = {"openai": 0, "store": 0, "builder": 0, "reply": []}
+
+    def create(**kwargs):
+        calls["openai"] += 1
+        return SimpleNamespace(
+            model=ai_service.OPENAI_MODEL,
+            usage=SimpleNamespace(
+                prompt_tokens=20,
+                completion_tokens=10,
+                total_tokens=30,
+            ),
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=json.dumps(model, ensure_ascii=False)
+                    )
+                )
+            ],
+        )
+
+    def fail_store(key, analysis):
+        calls["store"] += 1
+        raise RuntimeError("cache store failed")
+
+    def build(data):
+        calls["builder"] += 1
+        calls["flex_data"] = data
+        return "flex-message"
+
+    monkeypatch.setattr(webhook, "get_market_info", lambda stock_code: market)
+    monkeypatch.setattr(webhook, "ai_stock_analysis", ai_service.ai_stock_analysis)
+    monkeypatch.setattr(webhook, "build_stock_dashboard_flex", build)
+    monkeypatch.setattr(
+        webhook,
+        "reply_message",
+        lambda token, message: calls["reply"].append((token, message)),
+    )
+    monkeypatch.setattr(ai_service, "get_cache", lambda key: None)
+    monkeypatch.setattr(
+        ai_service,
+        "_create_client",
+        lambda: SimpleNamespace(
+            chat=SimpleNamespace(
+                completions=SimpleNamespace(create=create)
+            )
+        ),
+    )
+    monkeypatch.setattr(ai_service, "set_cache", fail_store)
+    monkeypatch.setattr(ai_service, "record_analysis_usage", lambda **kwargs: True)
+
+    webhook.handle_text_message(_event())
+
+    assert calls["openai"] == 1
+    assert calls["store"] == 1
+    assert calls["builder"] == 1
+    assert calls["reply"] == [("reply-token", "flex-message")]
+    assert calls["flex_data"]["ai_summary"] == model["ai_summary"]
+    assert calls["flex_data"]["explain"] == model["explain"]
 
 
 @pytest.mark.parametrize("composite", [None, "invalid", [], 1])
