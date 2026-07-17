@@ -37,3 +37,8 @@ data/usage.db-wal
 data/watchlist.db
 data/watchlist.db-shm
 data/watchlist.db-wal
+
+# Local price alert database
+data/alerts.db
+data/alerts.db-shm
+data/alerts.db-wal
