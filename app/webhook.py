@@ -19,7 +19,10 @@ from linebot.v3.webhooks import MessageEvent, TextMessageContent
 
 from app.config import LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET
 from app.flex.alert_list_card import build_alert_list_flex
+from app.flex.alert_creation_card import build_alert_creation_confirmation_flex
 from app.flex.builder import build_stock_dashboard_flex
+from core.models.alert_creation import AlertCreationStep
+from services.alert_creation_service import AlertCreationService, format_price
 from services.alert_management_service import AlertManagementService
 from services.ai_service import ai_stock_analysis
 from services.market_service import get_market_info
@@ -35,6 +38,7 @@ configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN or "")
 handler = WebhookHandler(LINE_CHANNEL_SECRET or "")
 watchlist_service = WatchlistService()
 alert_management_service = AlertManagementService()
+alert_creation_service = AlertCreationService()
 
 _WATCHLIST_COMMANDS = {
     "加入自選": "add",
@@ -81,7 +85,30 @@ async def line_webhook(request: Request):
 def handle_text_message(event: MessageEvent):
     user_text = event.message.text.strip()
 
-    if user_text in {"我的提醒", "新增提醒"}:
+    if user_text in {"取消", "取消提醒", "結束"}:
+        _handle_alert_creation_cancel(event)
+        return
+
+    user_id = _line_user_id(event)
+    if user_id is not None:
+        try:
+            active_session = alert_creation_service.get_session(user_id)
+            expired_session = alert_creation_service.consume_expired(user_id)
+        except Exception as error:
+            _alert_creation_error(event, error)
+            return
+        if active_session is not None:
+            _handle_alert_creation_session(event, user_id, user_text)
+            return
+        if expired_session:
+            safe_reply_text(event.reply_token, "提醒設定已逾時，請重新輸入『新增提醒』。")
+            return
+
+    if user_text == "新增提醒":
+        _handle_alert_creation_start(event)
+        return
+
+    if user_text == "我的提醒":
         _handle_alert_management_command(event, user_text)
         return
 
@@ -293,10 +320,6 @@ def _handle_watchlist_command(event: MessageEvent, action: str, stock_id: str | 
 
 
 def _handle_alert_management_command(event: MessageEvent, command: str) -> None:
-    if command == "新增提醒":
-        safe_reply_text(event.reply_token, "新增提醒功能即將開放。")
-        return
-
     user_id = _line_user_id(event)
     if user_id is None:
         safe_reply_text(event.reply_token, "無法識別使用者，請稍後再試。")
@@ -313,6 +336,86 @@ def _handle_alert_management_command(event: MessageEvent, command: str) -> None:
             error_type=type(error).__name__,
         )
         safe_reply_text(event.reply_token, "提醒服務暫時無法使用，請稍後再試。")
+
+
+def _handle_alert_creation_start(event: MessageEvent) -> None:
+    user_id = _line_user_id(event)
+    if user_id is None:
+        safe_reply_text(event.reply_token, "無法識別使用者，請稍後再試。")
+        return
+    try:
+        result = alert_creation_service.start(user_id)
+        safe_reply_text(event.reply_token, result.message + "\n\n輸入「取消」可結束設定。")
+    except Exception as error:
+        _alert_creation_error(event, error)
+
+
+def _handle_alert_creation_cancel(event: MessageEvent) -> None:
+    user_id = _line_user_id(event)
+    if user_id is None:
+        safe_reply_text(event.reply_token, "無法識別使用者，請稍後再試。")
+        return
+    try:
+        result = alert_creation_service.cancel(user_id)
+        safe_reply_text(event.reply_token, result.message)
+    except Exception as error:
+        _alert_creation_error(event, error)
+
+
+def _handle_alert_creation_session(event: MessageEvent, user_id: str, text: str) -> None:
+    try:
+        session = alert_creation_service.get_session(user_id)
+        if session is None:
+            safe_reply_text(event.reply_token, "提醒設定已逾時，請重新輸入『新增提醒』。")
+            return
+        if text in {"重新輸入", "重新開始"}:
+            result = alert_creation_service.restart(user_id)
+        elif text in {"確認建立", "確認"}:
+            result = alert_creation_service.confirm(user_id)
+        elif session.step is AlertCreationStep.AWAITING_STOCK_ID:
+            result = alert_creation_service.receive_stock_id(user_id, text)
+        elif session.step is AlertCreationStep.AWAITING_CONDITION:
+            result = alert_creation_service.select_condition(user_id, text)
+        elif session.step is AlertCreationStep.AWAITING_TARGET:
+            result = alert_creation_service.receive_target(user_id, text)
+        else:
+            result = alert_creation_service.confirm(user_id)
+        _reply_alert_creation_result(event, result)
+    except Exception as error:
+        _alert_creation_error(event, error)
+
+
+def _reply_alert_creation_result(event: MessageEvent, result) -> None:
+    if result.status == "awaiting_condition":
+        safe_reply_text(event.reply_token, "請選擇提醒條件：\n股價突破\n股價跌破\n取消")
+    elif result.status == "awaiting_target":
+        safe_reply_text(event.reply_token, result.message + "\n\n可輸入「重新開始」或「取消」。")
+    elif result.status == "awaiting_confirmation":
+        reply_message(event.reply_token, build_alert_creation_confirmation_flex(result))
+    elif result.status == "created":
+        alert = result.created_alert or {}
+        condition = "股價突破" if alert.get("condition") == "GT" else "股價跌破"
+        stock_id = str(alert.get("stock_id", "")).strip()
+        stock_name = str(alert.get("stock_name", "")).strip()
+        target = alert.get("target_price")
+        safe_reply_text(
+            event.reply_token,
+            "提醒建立成功\n\n"
+            f"{stock_id} {stock_name}".rstrip()
+            + f"\n{condition} {format_price(target)}\n\n可輸入「我的提醒」查看。",
+        )
+    else:
+        safe_reply_text(event.reply_token, result.message)
+
+
+def _alert_creation_error(event: MessageEvent, error: Exception) -> None:
+    log_event(
+        logger,
+        "line_message_end",
+        result="error",
+        error_type=type(error).__name__,
+    )
+    safe_reply_text(event.reply_token, "提醒設定暫時無法使用，請稍後再試。")
 
 
 def _line_user_id(event: MessageEvent) -> str | None:

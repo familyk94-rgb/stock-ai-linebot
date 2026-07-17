@@ -34,6 +34,14 @@ def _setup(monkeypatch, service=None):
     texts = []
     calls = {"market": 0, "ai": 0, "dashboard": 0}
     monkeypatch.setattr(webhook, "alert_management_service", service)
+    creation_service = SimpleNamespace(
+        get_session=lambda user_id: None,
+        consume_expired=lambda user_id: False,
+        start=lambda user_id: SimpleNamespace(
+            message="請輸入股票代號，例如 2330。"
+        ),
+    )
+    monkeypatch.setattr(webhook, "alert_creation_service", creation_service)
     monkeypatch.setattr(webhook, "reply_message", lambda token, message: replies.append((token, message)))
     monkeypatch.setattr(webhook, "safe_reply_text", lambda token, text: texts.append((token, text)))
     monkeypatch.setattr(webhook, "get_market_info", lambda stock_id: calls.__setitem__("market", calls["market"] + 1))
@@ -74,12 +82,12 @@ def test_service_error_uses_safe_text_fallback(monkeypatch):
     assert calls == {"market": 0, "ai": 0, "dashboard": 0}
 
 
-def test_add_alert_returns_coming_soon_without_service_or_database_write(monkeypatch):
+def test_add_alert_starts_creation_without_management_or_market_calls(monkeypatch):
     service, replies, texts, calls = _setup(monkeypatch)
     webhook.handle_text_message(_event("新增提醒"))
     assert service.calls == []
     assert replies == []
-    assert texts == [("reply-token", "新增提醒功能即將開放。")]
+    assert texts == [("reply-token", "請輸入股票代號，例如 2330。\n\n輸入「取消」可結束設定。")]
     assert calls == {"market": 0, "ai": 0, "dashboard": 0}
 
 

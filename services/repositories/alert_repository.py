@@ -107,6 +107,27 @@ class AlertRepository:
         finally:
             connection.close()
 
+    def exists_active_alert(
+        self,
+        line_user_id: str,
+        stock_id: str,
+        condition: str,
+        target_price: Decimal,
+    ) -> bool:
+        if not isinstance(target_price, Decimal):
+            raise TypeError("target_price must be Decimal")
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                """SELECT 1 FROM alerts
+                WHERE line_user_id = ? AND stock_id = ? AND condition = ?
+                AND target_price = ? AND enabled = 1 LIMIT 1""",
+                (line_user_id, stock_id, condition, str(target_price)),
+            ).fetchone()
+            return row is not None
+        finally:
+            connection.close()
+
     def remove_alert(self, alert_id: int, line_user_id: str | None = None) -> bool:
         connection = self._connect()
         try:

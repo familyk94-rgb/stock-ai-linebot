@@ -73,6 +73,24 @@ def test_duplicate_add_returns_none(tmp_path):
     assert len(repository.list_alerts("user-1")) == 1
 
 
+def test_exists_active_alert_matches_only_same_enabled_contract(tmp_path):
+    repository = AlertRepository(tmp_path / "alerts.db")
+    created = _add(repository, price="1000.25")
+    assert repository.exists_active_alert("user-1", "2330", "GT", Decimal("1000.25"))
+    assert not repository.exists_active_alert("user-2", "2330", "GT", Decimal("1000.25"))
+    assert not repository.exists_active_alert("user-1", "2454", "GT", Decimal("1000.25"))
+    assert not repository.exists_active_alert("user-1", "2330", "LT", Decimal("1000.25"))
+    assert not repository.exists_active_alert("user-1", "2330", "GT", Decimal("1000.26"))
+    assert repository.disable_alert(created["id"], "user-1")
+    assert not repository.exists_active_alert("user-1", "2330", "GT", Decimal("1000.25"))
+
+
+def test_exists_active_alert_uses_parameters_for_injection_text(tmp_path):
+    repository = AlertRepository(tmp_path / "alerts.db")
+    assert _add(repository)
+    assert repository.exists_active_alert("' OR 1=1 --", "2330", "GT", Decimal("1000")) is False
+
+
 def test_repository_rejects_float_target_price(tmp_path):
     repository = AlertRepository(tmp_path / "alerts.db")
     with pytest.raises(TypeError, match="Decimal"):
