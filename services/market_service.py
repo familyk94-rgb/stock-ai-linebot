@@ -74,11 +74,8 @@ def _build_market_info(stock_id: str) -> dict:
     quote_provider = QuoteProviderFactory(finmind_loader=get_stock_info).create()
     quote_result = quote_provider.get_quote(stock_id)
     stock = _quote_to_stock(quote_result.quote) if quote_result.ok else None
-    provider_used = (
-        quote_result.quote.provider
-        if quote_result.ok and quote_result.quote is not None
-        else None
-    )
+    quote_contract = _quote_contract(quote_result.quote if quote_result.ok else None)
+    provider_used = quote_contract["provider"]
 
     if not stock:
         financial = _get_fundamental_analysis(fundamental_engine, stock_id, asset)
@@ -96,6 +93,7 @@ def _build_market_info(stock_id: str) -> dict:
             "stock_code": stock_id,
             "stock_name": stock_name,
             "provider": provider_used,
+            "quote": quote_contract,
             "date": "-",
             "price": None,
             "open": None,
@@ -138,6 +136,7 @@ def _build_market_info(stock_id: str) -> dict:
         "stock_code": stock_id,
         "stock_name": stock_name,
         "provider": provider_used,
+        "quote": quote_contract,
         "date": stock.get("date", "-"),
 
         "price": stock.get("close"),
@@ -202,6 +201,52 @@ def _quote_to_stock(quote) -> dict | None:
         }
     except Exception:
         return None
+
+
+def _quote_contract(quote) -> dict:
+    contract = {
+        "symbol": None,
+        "price": None,
+        "reference_price": None,
+        "change": None,
+        "change_percent": None,
+        "volume": None,
+        "timestamp": None,
+        "market": None,
+        "provider": None,
+        "status": "unknown",
+        "is_realtime": False,
+        "data_quality": "invalid",
+    }
+    if quote is None:
+        return contract
+    try:
+        contract.update(
+            {
+                "symbol": quote.symbol,
+                "price": quote.price,
+                "reference_price": quote.reference,
+                "change": quote.change,
+                "change_percent": quote.change_percent,
+                "volume": quote.volume,
+                "timestamp": (
+                    quote.timestamp.isoformat()
+                    if quote.timestamp is not None
+                    else None
+                ),
+                "market": quote.market,
+                "provider": quote.provider,
+                "status": quote.status,
+                "is_realtime": quote.is_realtime is True,
+                "data_quality": quote.data_quality,
+            }
+        )
+    except Exception:
+        return {
+            **contract,
+            "provider": None,
+        }
+    return contract
 
 
 def _run_parallel_sources(

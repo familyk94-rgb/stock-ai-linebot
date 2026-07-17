@@ -39,9 +39,24 @@ FORBIDDEN_EXPLAIN_TERMS = (
     "強烈買進", "強烈賣出", "保證獲利", "必定上漲", "必定下跌",
     "無風險", "投資建議", "建議投資",
 )
+QUOTE_CONTRACT_FIELDS = (
+    "symbol",
+    "price",
+    "reference_price",
+    "change",
+    "change_percent",
+    "volume",
+    "timestamp",
+    "market",
+    "provider",
+    "status",
+    "is_realtime",
+    "data_quality",
+)
 
 
 def ai_stock_analysis(stock):
+    stock = _analysis_market_data(stock)
     cache_key = f"ai_dashboard_v2_{stock['stock_id']}_{stock['date']}"
     cache_started = perf_counter()
     cache_elapsed = 0
@@ -158,6 +173,32 @@ def _safe_set_cache(cache_key: str, analysis: dict) -> None:
             pass
 
 
+def _analysis_market_data(stock: dict) -> dict:
+    result = dict(stock)
+    raw_quote = stock.get("quote")
+    if isinstance(raw_quote, dict):
+        quote = {field: raw_quote.get(field) for field in QUOTE_CONTRACT_FIELDS}
+    else:
+        quote = {
+            "symbol": stock.get("stock_id"),
+            "price": stock.get("price"),
+            "reference_price": stock.get("reference_price"),
+            "change": stock.get("change"),
+            "change_percent": stock.get("change_percent"),
+            "volume": stock.get("volume"),
+            "timestamp": stock.get("timestamp"),
+            "market": stock.get("market"),
+            "provider": stock.get("provider"),
+            "status": stock.get("status", "unknown"),
+            "is_realtime": stock.get("is_realtime") is True,
+            "data_quality": stock.get("quote_data_quality", "invalid"),
+        }
+    result["quote"] = quote
+    if result.get("provider") is None:
+        result["provider"] = quote.get("provider")
+    return result
+
+
 def _track_usage(**kwargs) -> None:
     try:
         record_analysis_usage(**kwargs)
@@ -177,7 +218,13 @@ def _create_client():
 
 
 def _build_prompt(stock: dict, fallback: dict) -> str:
+    quote_contract = json.dumps(
+        stock.get("quote", {}),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     return f"""
+Quote Contract: {quote_contract}
 你是「股市柑仔店 AI 投資助理」，請用繁體中文分析台股。
 股票名稱：{stock.get('stock_name', '')}
 股票代號：{stock.get('stock_id', '')}
