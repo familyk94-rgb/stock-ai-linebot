@@ -1,0 +1,63 @@
+{
+  "twse_realtime": {
+    "symbol": "2330",
+    "market": "TWSE",
+    "timestamp": "2026-07-17T10:30:00+08:00",
+    "status": "trading",
+    "price": "1000.0",
+    "reference": 990,
+    "open": 995,
+    "high": 1005,
+    "low": 990,
+    "volume": 12345,
+    "is_realtime": true
+  },
+  "tpex_realtime": {
+    "stockNo": "6488",
+    "exchange": "OTC",
+    "time": 1784255400000,
+    "marketStatus": "open",
+    "lastPrice": 500,
+    "referencePrice": 495,
+    "openPrice": 496,
+    "highPrice": 502,
+    "lowPrice": 494,
+    "totalVolume": 2000,
+    "isRealtime": true
+  },
+  "delayed": {
+    "symbol": "2330",
+    "market": "TWSE",
+    "timestamp": "2026-07-17T10:30:00+08:00",
+    "status": "delayed",
+    "price": 1000,
+    "reference": 990,
+    "open": 995,
+    "high": 1005,
+    "low": 990,
+    "volume": 12345,
+    "is_realtime": false
+  },
+  "closed": {
+    "symbol": "2330",
+    "market": "TWSE",
+    "timestamp": "2026-07-17T13:30:00+08:00",
+    "status": "closed",
+    "price": 1000,
+    "reference": 990,
+    "open": 995,
+    "high": 1005,
+    "low": 990,
+    "volume": 12345,
+    "is_realtime": true
+  },
+  "incomplete": {
+    "symbol": "2330",
+    "status": "trading",
+    "price": 1000,
+    "is_realtime": true
+  },
+  "malformed": {
+    "unexpected": "value"
+  }
+}
