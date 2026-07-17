@@ -45,6 +45,7 @@ EVENTS = frozenset(
         "shopkeeper_analysis_end", "data_quality_analysis_end",
         "ai_cache_lookup_end",
         "source_cache_lookup_end", "source_cache_store_end",
+        "quote_provider_end",
     }
 )
 

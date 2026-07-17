@@ -5,6 +5,7 @@ from time import perf_counter
 
 from services.asset_service import AssetService, asset_fallback
 from services.stock_service import get_stock_info
+from services.providers.quote_provider_factory import QuoteProviderFactory
 from services.technical_service import get_technical_indicators
 from services.stock_name_service import get_stock_name
 from core.ganzai_ai import GanzaiAI
@@ -70,7 +71,9 @@ def _build_market_info(stock_id: str) -> dict:
     stock_name = get_stock_name(stock_id) or ""
     asset = _get_asset(asset_service, stock_id)
 
-    stock = get_stock_info(stock_id)
+    quote_provider = QuoteProviderFactory(finmind_loader=get_stock_info).create()
+    quote_result = quote_provider.get_quote(stock_id)
+    stock = _quote_to_stock(quote_result.quote) if quote_result.ok else None
 
     if not stock:
         financial = _get_fundamental_analysis(fundamental_engine, stock_id, asset)
@@ -172,6 +175,26 @@ def _build_market_info(stock_id: str) -> dict:
     stock_data["data_quality"] = _get_data_quality(data_quality_engine, stock_data)
 
     return stock_data
+
+
+def _quote_to_stock(quote) -> dict | None:
+    if quote is None:
+        return None
+    try:
+        date_value = quote.timestamp.date().isoformat() if quote.timestamp else "-"
+        return {
+            "stock_id": quote.symbol,
+            "date": date_value,
+            "close": quote.price,
+            "open": quote.open,
+            "max": quote.high,
+            "min": quote.low,
+            "change": quote.change,
+            "change_percent": quote.change_percent,
+            "volume": quote.volume,
+        }
+    except Exception:
+        return None
 
 
 def _run_parallel_sources(
