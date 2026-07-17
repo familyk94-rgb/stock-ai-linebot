@@ -32,3 +32,8 @@ Thumbs.db
 data/usage.db
 data/usage.db-shm
 data/usage.db-wal
+
+# Local watchlist database
+data/watchlist.db
+data/watchlist.db-shm
+data/watchlist.db-wal
