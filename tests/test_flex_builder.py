@@ -1,5 +1,6 @@
 import json
 from copy import deepcopy
+from datetime import datetime, timezone
 
 import pytest
 from linebot.v3.messaging import FlexContainer, FlexMessage
@@ -23,6 +24,20 @@ def _full_data(**overrides):
         "change": 10,
         "change_percent": 1.01,
         "volume": 123456,
+        "quote": {
+            "symbol": "2330",
+            "price": 1000,
+            "reference_price": 990,
+            "change": 10,
+            "change_percent": 1.01,
+            "volume": 123456,
+            "timestamp": "2026-07-17T10:30:00+08:00",
+            "market": "TWSE",
+            "provider": "fubon_neo",
+            "status": "trading",
+            "is_realtime": True,
+            "data_quality": "realtime",
+        },
         "trend": "多頭",
         "ma_signal": "站上 MA20",
         "macd_signal": "黃金交叉",
@@ -126,6 +141,103 @@ def test_dashboard_uses_ai_technical_score_naming_contract():
     assert "82.6" in dashboard_texts
     assert "偏多" in dashboard_texts
     assert "中等風險" in dashboard_texts
+
+
+def test_dashboard_displays_neo_live_quote_without_changing_existing_contract():
+    dashboard = build_stock_dashboard_bubble(_full_data())["body"]["contents"][0]
+    texts = _text_values(dashboard)
+
+    assert {"AI 儀表板", "AI 技術分", "決策", "風險", "即時行情"}.issubset(texts)
+    assert {
+        "最新價", "1000", "漲跌", "▲ 10", "漲跌幅", "▲ 1.01%",
+        "成交量", "123,456", "更新時間", "2026-07-17 10:30:00",
+        "資料來源", "富邦 Neo", "資料品質", "即時",
+    }.issubset(texts)
+
+
+def test_dashboard_displays_finmind_fallback_quote():
+    quote = deepcopy(_full_data()["quote"])
+    quote.update(provider="finmind", data_quality="delayed", is_realtime=False)
+    texts = _text_values(
+        build_stock_dashboard_bubble(_full_data(quote=quote))["body"]["contents"][0]
+    )
+
+    assert "FinMind" in texts
+    assert "延遲" in texts
+
+
+@pytest.mark.parametrize(
+    ("change", "expected"),
+    [(10, "▲ 10"), (-2.5, "▼ 2.5"), (0, "—"), (None, "暫無資料")],
+)
+def test_dashboard_change_direction_contract(change, expected):
+    quote = deepcopy(_full_data()["quote"])
+    quote["change"] = change
+    dashboard = build_stock_dashboard_bubble(_full_data(quote=quote))["body"]["contents"][0]
+    rows = dashboard["contents"]
+    change_row = next(row for row in rows if "漲跌" in _text_values(row))
+    assert _text_values(change_row) == ["漲跌", expected]
+
+
+@pytest.mark.parametrize(
+    ("timestamp", "expected"),
+    [
+        ("2026-07-17T02:30:00Z", "2026-07-17 10:30:00"),
+        (1784255400, "2026-07-17 10:30:00"),
+        (1784255400000, "2026-07-17 10:30:00"),
+        (1784255400000000, "2026-07-17 10:30:00"),
+        (datetime(2026, 7, 17, 2, 30, tzinfo=timezone.utc), "2026-07-17 10:30:00"),
+        ("2026/07/17 10:30", "2026/07/17 10:30"),
+        (None, "暫無資料"),
+        ("not-a-time", "暫無資料"),
+    ],
+)
+def test_dashboard_timestamp_formats_safely_in_taipei_time(timestamp, expected):
+    quote = deepcopy(_full_data()["quote"])
+    quote["timestamp"] = timestamp
+    texts = _text_values(
+        build_stock_dashboard_bubble(_full_data(quote=quote))["body"]["contents"][0]
+    )
+    assert expected in texts
+
+
+@pytest.mark.parametrize(
+    ("quality", "expected"),
+    [
+        ("realtime", "即時"),
+        ("delayed", "延遲"),
+        ("stale", "過期"),
+        ("incomplete", "不完整"),
+        ("invalid", "無效"),
+    ],
+)
+def test_dashboard_data_quality_labels(quality, expected):
+    quote = deepcopy(_full_data()["quote"])
+    quote["data_quality"] = quality
+    texts = _text_values(
+        build_stock_dashboard_bubble(_full_data(quote=quote))["body"]["contents"][0]
+    )
+    assert expected in texts
+
+
+@pytest.mark.parametrize("quote", [None, {}, "invalid", [], {"provider": None}])
+def test_dashboard_invalid_or_missing_quote_degrades_safely(quote):
+    dashboard = build_stock_dashboard_bubble(_full_data(quote=quote))["body"]["contents"][0]
+    texts = _text_values(dashboard)
+    assert "即時行情" in texts
+    assert "暫無資料" in texts
+    assert "AI 技術分" in texts
+    assert FlexContainer.from_dict(build_stock_dashboard_bubble(_full_data(quote=quote)))
+
+
+def test_dashboard_quote_does_not_mutate_input_and_volume_has_no_assumed_unit():
+    data = _full_data()
+    original = deepcopy(data)
+    dashboard = build_stock_dashboard_bubble(data)["body"]["contents"][0]
+    texts = _text_values(dashboard)
+    assert "123,456" in texts
+    assert all("張" not in text for text in texts)
+    assert data == original
 
 
 @pytest.mark.parametrize(

@@ -33,6 +33,7 @@ def build_stock_dashboard_bubble(data: dict | None = None) -> dict:
                     confidence=data.get("confidence"),
                     decision=data.get("decision"),
                     risk_level=data.get("risk_level"),
+                    quote=data.get("quote"),
                 ),
                 build_shopkeeper_card(
                     message=data.get("shopkeeper_message"),

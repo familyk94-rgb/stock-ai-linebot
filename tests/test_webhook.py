@@ -34,6 +34,20 @@ def _market_data(**overrides):
         "change": 10,
         "change_percent": 1,
         "volume": 1000,
+        "quote": {
+            "symbol": "2330",
+            "price": 1000,
+            "reference_price": 990,
+            "change": 10,
+            "change_percent": 1,
+            "volume": 1000,
+            "timestamp": "2026-07-17T10:30:00+08:00",
+            "market": "TWSE",
+            "provider": "fubon_neo",
+            "status": "trading",
+            "is_realtime": True,
+            "data_quality": "realtime",
+        },
         "trend": "市場趨勢",
         "ma_signal": "市場 MA",
         "macd_signal": "市場 MACD",
@@ -104,6 +118,7 @@ def test_normal_flow_maps_flex_data_and_replies_once(monkeypatch):
     expected_keys = {
         "stock_code", "stock_name", "score", "confidence", "decision", "risk_level",
         "shopkeeper_message", "price", "change", "change_percent", "volume",
+        "quote",
         "trend", "ma_signal", "macd_signal", "rsi_signal", "ai_summary", "explain",
         "composite_available", "composite_score", "composite_summary", "composite_coverage",
         "data_quality_status", "data_quality_is_stale",
@@ -121,6 +136,25 @@ def test_normal_flow_maps_flex_data_and_replies_once(monkeypatch):
     assert calls["flex_data"]["composite_coverage"] == 100
     assert calls["flex_data"]["data_quality_status"] == "部分資料"
     assert calls["flex_data"]["data_quality_is_stale"] is True
+    assert calls["flex_data"]["quote"] == _market_data()["quote"]
+
+
+@pytest.mark.parametrize("quote", [None, "invalid", [], 1])
+def test_invalid_or_missing_quote_maps_empty_without_changing_reply_contract(monkeypatch, quote):
+    calls = _setup_normal(monkeypatch)
+    market = _market_data(quote=quote)
+
+    def get_market(code):
+        calls["market"] += 1
+        return market
+
+    monkeypatch.setattr(webhook, "get_market_info", get_market)
+
+    webhook.handle_text_message(_event())
+
+    assert calls["market"] == calls["ai"] == calls["builder"] == 1
+    assert len(calls["reply"]) == 1
+    assert calls["flex_data"]["quote"] == {}
 
 
 def test_ai_cache_store_failure_still_builds_and_replies_once(monkeypatch):

@@ -134,6 +134,9 @@ def handle_text_message(event: MessageEvent):
         data_quality = market_data.get("data_quality")
         if not isinstance(data_quality, dict):
             data_quality = {}
+        quote_data = market_data.get("quote")
+        if not isinstance(quote_data, dict):
+            quote_data = {}
 
         flex_data = {
             "stock_code": stock_code,
@@ -150,6 +153,7 @@ def handle_text_message(event: MessageEvent):
             "change": market_data.get("change"),
             "change_percent": market_data.get("change_percent"),
             "volume": market_data.get("volume"),
+            "quote": quote_data,
             "trend": core_data.get("trend") or market_data.get("trend"),
             "ma_signal": core_data.get("ma_signal") or market_data.get("ma_signal"),
             "macd_signal": core_data.get("macd_signal") or market_data.get("macd_signal"),
